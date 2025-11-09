@@ -1,23 +1,6 @@
 ## MegaD для Home Assistant
 *Неофициальная версия интеграции.*  
 
-<details>
-<summary>Группа обсуждения в телеграм</summary>
-
-<img src="./data/img/mihvs_integrations.png" alt="telegram" width="300" />
-
-</details>  
-
-
-![python version](https://img.shields.io/badge/Python-3.13-yellowgreen?style=plastic&logo=python)
-![pydantic version](https://img.shields.io/badge/pydantic-ha-yellowgreen?style=plastic&logo=fastapi)
-![aiohttp version](https://img.shields.io/badge/aiohttp-ha-yellowgreen?style=plastic)
-![Home Assistant](https://img.shields.io/badge/HomeAssistant-latest-yellowgreen?style=plastic&logo=homeassistant)
-
-#### Поддержать разработку
-
-[![Donate](https://img.shields.io/badge/donate-Tinkoff-FFDD2D.svg)](https://www.tinkoff.ru/rm/shutov.mikhail19/wUyu873109)
-
 ## Содержание.
 * [**_Описание._**](#описание)
 * [**_Возможности._**](#возможности)
@@ -580,7 +563,7 @@ MegaD в поле "Mode" стоит значение "P&R" или значени
 ## Установка.
 **Способ 1.** [HACS](https://hacs.xyz/) -> Интеграции -> 3 точки в правом верхнем углу -> Пользовательские репозитории
 
-Далее вставляем репозиторий https://github.com/MihVS/megad выбираем категорию "Интеграция" и жмём добавить.
+Далее вставляем репозиторий https://github.com/zmej904/megad выбираем категорию "Интеграция" и жмём добавить.
 ***
 **Способ 2.** Вручную скопируйте каталог `megad` в директорию `/config/custom_components`
 ***
@@ -599,4 +582,4 @@ logger:
 ```
 
 ## Разработчик
-**[Михаил Шутов](https://github.com/mihvs)**
+**[Юрий](https://github.com/zmej904)**
