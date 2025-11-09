@@ -47,6 +47,19 @@ VOLTAGE = 'bV'
 RAW_VALUE = 'raw'
 BAR = 'bar'
 
+# Типы нажатий кнопок
+SINGLE_CLICK = "single"
+DOUBLE_CLICK = "double" 
+LONG_CLICK = "long"
+CLICK_TYPES = [SINGLE_CLICK, DOUBLE_CLICK, LONG_CLICK]
+
+# Состояния сенсоров нажатий (исправлено согласно требованиям)
+CLICK_STATE_NONE = "none"
+CLICK_STATE_SINGLE = "Single"
+CLICK_STATE_DOUBLE = "Double" 
+CLICK_STATE_LONG = "Long"
+CLICK_STATES = [CLICK_STATE_NONE, CLICK_STATE_SINGLE, CLICK_STATE_DOUBLE, CLICK_STATE_LONG]
+
 # Перевод сенсоров
 TYPE_SENSOR_RUS = {
     TEMPERATURE: 'температура',
@@ -58,6 +71,13 @@ TYPE_SENSOR_RUS = {
     RAW_VALUE: 'сырые_данные',
     LUXURY: 'освещённость',
     BAR: 'давление',
+}
+
+# Перевод типов нажатий
+CLICK_TYPE_RUS = {
+    SINGLE_CLICK: 'одинарное нажатие',
+    DOUBLE_CLICK: 'двойное нажатие',
+    LONG_CLICK: 'длинное нажатие',
 }
 
 STATUS_THERMO = 'status_thermo'
@@ -139,6 +159,15 @@ TYPE_SENSOR = TypeSensor(
 
 StateButton = namedtuple('StateButton', ['SINGLE', 'DOUBLE', 'LONG', 'OFF'])
 STATE_BUTTON = StateButton(SINGLE="single", DOUBLE="double", LONG="long", OFF="off")
+
+# Типы нажатий для сенсоров
+ClickType = namedtuple('ClickType', ['SINGLE', 'DOUBLE', 'LONG'])
+CLICK_TYPE = ClickType(SINGLE=SINGLE_CLICK, DOUBLE=DOUBLE_CLICK, LONG=LONG_CLICK)
+
+# Состояния сенсоров нажатий
+ClickState = namedtuple('ClickState', ['NONE', 'SINGLE', 'DOUBLE', 'LONG'])
+CLICK_STATE = ClickState(NONE=CLICK_STATE_NONE, SINGLE=CLICK_STATE_SINGLE, 
+                         DOUBLE=CLICK_STATE_DOUBLE, LONG=CLICK_STATE_LONG)
 
 PortCommand = namedtuple('PortCommand', ['ON', 'OFF', 'TOGGLE'])
 PORT_COMMAND = PortCommand(ON='1', OFF='0', TOGGLE='2')
