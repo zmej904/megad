@@ -79,6 +79,7 @@ class BinaryPortIn(BinaryPort):
     def __init__(self, conf: PortInConfig, megad_id):
         super().__init__(conf, megad_id)
         self._state: bool = False
+        self.mode = getattr(conf, 'mode', 'C')
 
     def update_state(self, data: str | dict):
         """
@@ -216,6 +217,7 @@ class BinaryPortCount(BinaryPort):
     def __init__(self, conf: PortInConfig, megad_id):
         super().__init__(conf, megad_id)
         self._state = None
+        self.mode = getattr(conf, 'mode', 'C')
 
     def update_state(self, data: str | dict):
         """
