@@ -13,15 +13,16 @@ from .const import (
     HUMIDITY, ENTRIES, CURRENT_ENTITY_IDS, CO2, TYPE_SENSOR_RUS, PRESSURE,
     TYPE_SENSOR, TEMPERATURE_CONDITION, DEVIATION_TEMPERATURE,
     ALLOWED_TEMP_JUMP, ALLOWED_HUM_JUMP, CURRENT, VOLTAGE, RAW_VALUE, LUXURY,
-    BAR
+    BAR, SINGLE_CLICK, DOUBLE_CLICK, LONG_CLICK, CLICK_TYPES, CLICK_STATES,
+    CLICK_STATE_SINGLE, CLICK_STATE_DOUBLE, CLICK_STATE_LONG, CLICK_STATE_NONE
 )
 from .core.base_pids import PIDControl
 from .core.base_ports import (
     BinaryPortClick, BinaryPortCount, BinaryPortIn, OneWireSensorPort,
     DigitalSensorBase, DHTSensorPort, OneWireBusSensorPort, I2CSensorSCD4x,
-    I2CSensorSTH31, AnalogSensor, I2CSensorHTUxxD, I2CSensorMBx280, ReaderPort,
+    I2CSensorSTH31, I2CSensorHTUxxD, I2CSensorMBx280, ReaderPort,
     I2CSensorINA226, I2CSensorBH1750, I2CSensorT67xx, I2CSensorBMP180,
-    I2CSensorPT, I2CSensorILLUM
+    I2CSensorPT, I2CSensorILLUM, AnalogSensor
 )
 from .core.megad import MegaD
 
@@ -42,6 +43,30 @@ def create_temp_hum(sensors, entry_id, coordinator, megad, port):
     )
 
 
+def get_port_mode(port):
+    """Определяет режим работы порта на основе его типа"""
+    # BinaryPortClick всегда в режиме C (нажатия)
+    if isinstance(port, BinaryPortClick):
+        return 'C'
+    
+    # BinaryPortIn может быть в режимах P, R, P&R
+    if isinstance(port, BinaryPortIn):
+        # Пытаемся определить режим из названия порта
+        port_name = port.conf.name.lower()
+        
+        if ' p&r' in port_name or ' p_r' in port_name or ' p и r' in port_name:
+            return 'P&R'
+        elif ' p ' in port_name or ' режим p' in port_name:
+            return 'P'
+        elif ' r ' in port_name or ' режим r' in port_name:
+            return 'R'
+        else:
+            # По умолчанию для BinaryPortIn считаем P&R
+            return 'P&R'
+    
+    return None
+
+
 async def async_setup_entry(
         hass: HomeAssistant,
         config_entry: ConfigEntry,
@@ -53,16 +78,24 @@ async def async_setup_entry(
 
     sensors = []
     for port in megad.ports:
-        if isinstance(port, BinaryPortClick):
+        # Определяем режим работы порта
+        port_mode = get_port_mode(port)
+        _LOGGER.debug(f'Port {port.conf.id} ({port.conf.name}): type={type(port).__name__}, mode={port_mode}, current_state={port.state}')
+        
+        # Для портов в режиме C создаем сущность нажатий
+        if port_mode == 'C':
             unique_id = f'{entry_id}-{megad.id}-{port.conf.id}-click'
-            sensors.append(ClickSensorMegaD(
-                coordinator, port, unique_id)
-            )
-        if isinstance(port, (BinaryPortCount, BinaryPortClick, BinaryPortIn)):
-            unique_id = f'{entry_id}-{megad.id}-{port.conf.id}-count'
-            sensors.append(CountSensorMegaD(
-                coordinator, port, unique_id)
-            )
+            click_sensor = ClickSensorMegaD(coordinator, port, unique_id)
+            sensors.append(click_sensor)
+            _LOGGER.info(f'Создана сущность нажатий для порта {port.conf.id} (режим C), текущее состояние: {port.state}')
+            
+        # Для портов в режимах P, R, P&R создаем сущности состояния
+        if port_mode in ['P', 'R', 'P&R']:
+            unique_id = f'{entry_id}-{megad.id}-{port.conf.id}-state'
+            state_sensor = BinaryStateSensorMegaD(coordinator, port, unique_id, port_mode)
+            sensors.append(state_sensor)
+            _LOGGER.info(f'Создана сущность состояния для порта {port.conf.id} в режиме {port_mode}, текущее состояние: {port.state}')
+                
         if isinstance(port, ReaderPort):
             unique_id = f'{entry_id}-{megad.id}-{port.conf.id}-reader'
             sensors.append(ReaderSensorMegaD(
@@ -170,6 +203,77 @@ async def async_setup_entry(
         _LOGGER.debug(f'Добавлены сенсоры: {sensors}')
 
 
+class BinaryStateSensorMegaD(CoordinatorEntity, SensorEntity):
+    """Сенсор состояния для портов в режимах P, R, P&R"""
+
+    _attr_icon = 'mdi:electric-switch'
+
+    def __init__(
+            self, 
+            coordinator: MegaDCoordinator, 
+            port: BinaryPortIn,
+            unique_id: str,
+            port_mode: str
+    ) -> None:
+        super().__init__(coordinator)
+        self._megad: MegaD = coordinator.megad
+        self._port = port
+        self._unique_id: str = unique_id
+        self._attr_device_info = coordinator.devices_info()
+        self._domain = getattr(port.conf, 'domain', 'sensor')
+        self.entity_id = f'{self._domain}.{self._megad.id}_port{port.conf.id}_state'
+        
+        # Сохраняем режим работы порта
+        self._port_mode = port_mode
+
+    def __repr__(self) -> str:
+        if not self.hass:
+            return f"<Sensor entity {self.entity_id}>"
+        return super().__repr__()
+
+    @cached_property
+    def name(self) -> str:
+        return f'{self._port.conf.name} State'
+
+    @cached_property
+    def unique_id(self) -> str:
+        return self._unique_id
+
+    @property
+    def native_value(self) -> str:
+        """Возвращает состояние порта в зависимости от режима"""
+        # Физическое состояние порта (True - замкнуто, False - разомкнуто)
+        physical_state = bool(self._port.state)
+        
+        if self._port_mode == 'P':
+            # P-режим: on когда порт замыкается
+            return 'on' if physical_state else 'off'
+        elif self._port_mode == 'R':
+            # R-режим: on когда порт размыкается  
+            return 'on' if not physical_state else 'off'
+        else:  # P&R режим
+            # P&R-режим: отображает физическое состояние порта
+            return 'on' if physical_state else 'off'
+
+    @cached_property
+    def extra_state_attributes(self):
+        """Дополнительные атрибуты сенсора"""
+        physical_state = bool(self._port.state)
+        
+        return {
+            'port_id': self._port.conf.id,
+            'device_id': self._megad.id,
+            'port_mode': self._port_mode,
+            'physical_state': 'closed' if physical_state else 'open',
+            'domain': self._domain
+        }
+
+    @cached_property
+    def domain(self) -> str:
+        """Возвращает пространство имен сущности"""
+        return self._domain
+
+
 class StringSensorMegaD(CoordinatorEntity, SensorEntity):
     """Класс для сенсоров с текстовым значением"""
 
@@ -183,7 +287,9 @@ class StringSensorMegaD(CoordinatorEntity, SensorEntity):
         self._sensor_name: str = port.conf.name
         self._unique_id: str = unique_id
         self._attr_device_info = coordinator.devices_info()
-        self.entity_id = f'sensor.{self._megad.id}_port{port.conf.id}'
+        # Получаем domain из конфигурации порта или используем по умолчанию
+        self._domain = getattr(port.conf, 'domain', 'sensor')
+        self.entity_id = f'{self._domain}.{self._megad.id}_port{port.conf.id}'
 
     def __repr__(self) -> str:
         if not self.hass:
@@ -203,36 +309,39 @@ class StringSensorMegaD(CoordinatorEntity, SensorEntity):
         """Возвращает состояние сенсора"""
         return self._port.state
 
+    @cached_property
+    def domain(self) -> str:
+        """Возвращает пространство имен сущности"""
+        return self._domain
+
 
 class ReaderSensorMegaD(StringSensorMegaD):
 
     _attr_icon = 'mdi:lock-smart'
 
 
-class ClickSensorMegaD(StringSensorMegaD):
+class ClickSensorMegaD(CoordinatorEntity, SensorEntity):
+    """Сенсор кнопки с поддержкой всех типов нажатий"""
 
     _attr_icon = 'mdi:gesture-tap-button'
 
-    @cached_property
-    def capability_attributes(self):
-        return {
-            "options": STATE_BUTTON
-        }
-
-
-class CountSensorMegaD(CoordinatorEntity, SensorEntity):
-
-    _attr_icon = 'mdi:counter'
-
     def __init__(
-            self, coordinator: MegaDCoordinator, port: BinaryPortClick,
+            self, 
+            coordinator: MegaDCoordinator, 
+            port: BinaryPortClick,
             unique_id: str
     ) -> None:
         super().__init__(coordinator)
         self._megad: MegaD = coordinator.megad
-        self._port: (BinaryPortClick, BinaryPortIn, BinaryPortCount) = port
+        self._port = port
         self._unique_id: str = unique_id
         self._attr_device_info = coordinator.devices_info()
+        # Получаем domain из конфигурации порта или используем по умолчанию
+        self._domain = getattr(port.conf, 'domain', 'sensor')
+        self.entity_id = f'{self._domain}.{self._megad.id}_port{port.conf.id}_click'
+        
+        # Текущее состояние нажатия
+        self._current_click_state = CLICK_STATE_NONE
 
     def __repr__(self) -> str:
         if not self.hass:
@@ -240,22 +349,69 @@ class CountSensorMegaD(CoordinatorEntity, SensorEntity):
         return super().__repr__()
 
     @cached_property
-    def state_class(self) -> SensorStateClass | str | None:
-        """Return the state class of this entity, if any."""
-        return SensorStateClass.TOTAL_INCREASING
-
-    @cached_property
     def name(self) -> str:
-        return f'{self._megad.id}_port{self._port.conf.id}_count'
+        return f'{self._port.conf.name} Click'
 
     @cached_property
     def unique_id(self) -> str:
         return self._unique_id
 
+    @cached_property
+    def capability_attributes(self):
+        return {
+            "options": ['off', 'single', 'double', 'long']  # Старые значения для обратной совместимости
+        }
+
     @property
     def native_value(self) -> str:
-        """Возвращает состояние сенсора"""
-        return self._port.count
+        """Возвращает текущее состояние нажатия"""
+        # Получаем текущее состояние порта
+        port_state = self._port.state
+        
+        # Определяем тип нажатия на основе состояния порта
+        # Используем старые значения для обратной совместимости с автоматизациями
+        if port_state == STATE_BUTTON.SINGLE:
+            return 'single'
+        elif port_state == STATE_BUTTON.DOUBLE:
+            return 'double'
+        elif port_state == STATE_BUTTON.LONG:
+            return 'long'
+        else:
+            return 'off'
+
+    @cached_property
+    def extra_state_attributes(self):
+        """Дополнительные атрибуты с детальной информацией о нажатиях"""
+        port_state = self._port.state
+        
+        # Определяем активные типы нажатий
+        single_active = port_state == STATE_BUTTON.SINGLE
+        double_active = port_state == STATE_BUTTON.DOUBLE
+        long_active = port_state == STATE_BUTTON.LONG
+        
+        return {
+            'port_id': self._port.conf.id,
+            'device_id': self._megad.id,
+            'supported_click_types': ['off', 'single', 'double', 'long'],
+            'domain': self._domain,
+            # Детальная информация о каждом типе нажатия
+            'single_click_active': single_active,
+            'double_click_active': double_active,
+            'long_click_active': long_active,
+            # Счетчики нажатий (если доступны)
+            'single_click_count': getattr(self._port, 'single_click_count', 0),
+            'double_click_count': getattr(self._port, 'double_click_count', 0),
+            'long_click_count': getattr(self._port, 'long_click_count', 0),
+            # Общий счетчик
+            'total_clicks': getattr(self._port, 'count', 0),
+            # Текущее сырое состояние порта
+            'raw_state': port_state,
+        }
+
+    @cached_property
+    def domain(self) -> str:
+        """Возвращает пространство имен сущности"""
+        return self._domain
 
 
 class SensorMegaD(CoordinatorEntity, SensorEntity):
@@ -271,8 +427,9 @@ class SensorMegaD(CoordinatorEntity, SensorEntity):
         self._sensor_name: str = (f'{port.conf.name} '
                                   f'{TYPE_SENSOR_RUS[type_sensor]}{prefix}')
         self._unique_id: str = unique_id
+        self._domain = getattr(port.conf, 'domain', 'sensor')
         self._attr_device_info = coordinator.devices_info()
-        self.entity_id = (f'sensor.{self._megad.id}_port{port.conf.id}_'
+        self.entity_id = (f'{self._domain}.{self._megad.id}_port{port.conf.id}_'
                           f'{self.type_sensor.lower()}{prefix}')
         self.last_value: None | int | float = None
         self.info_filter()
@@ -367,6 +524,11 @@ class SensorMegaD(CoordinatorEntity, SensorEntity):
     def device_class(self) -> str | None:
         return SENSOR_CLASS.get(self.type_sensor)
 
+    @cached_property
+    def domain(self) -> str:
+        """Возвращает пространство имен сущности"""
+        return self._domain
+
 
 class SensorBusMegaD(SensorMegaD):
 
@@ -378,7 +540,7 @@ class SensorBusMegaD(SensorMegaD):
         self.id_one_wire = id_one_wire
         self._sensor_name: str = f'{port.conf.name}_{id_one_wire}'
         self._unique_id: str = unique_id
-        self.entity_id = (f'sensor.{self._megad.id}_port{port.conf.id}_'
+        self.entity_id = (f'{self._domain}.{self._megad.id}_port{port.conf.id}_'
                           f'{id_one_wire}')
 
     @property
@@ -399,8 +561,9 @@ class SensorDeviceMegaD(CoordinatorEntity, SensorEntity):
         self.type_sensor = type_sensor
         self._sensor_name: str = f'megad_{self._megad.id}_{type_sensor}'
         self._unique_id: str = unique_id
+        self._domain = 'sensor'  # Для device сенсоров используем sensor по умолчанию
         self._attr_device_info = coordinator.devices_info()
-        self.entity_id = f'sensor.megad_{self._sensor_name}'
+        self.entity_id = f'{self._domain}.megad_{self._sensor_name}'
 
     def __repr__(self) -> str:
         if not self.hass:
@@ -437,6 +600,11 @@ class SensorDeviceMegaD(CoordinatorEntity, SensorEntity):
     def device_class(self) -> str | None:
         return SENSOR_CLASS.get(self.type_sensor)
 
+    @cached_property
+    def domain(self) -> str:
+        """Возвращает пространство имен сущности"""
+        return self._domain
+
 
 class AnalogSensorMegaD(CoordinatorEntity, SensorEntity):
 
@@ -452,8 +620,9 @@ class AnalogSensorMegaD(CoordinatorEntity, SensorEntity):
         self.type_sensor = type_sensor
         self._sensor_name: str = port.conf.name
         self._unique_id: str = unique_id
+        self._domain = getattr(port.conf, 'domain', 'sensor')
         self._attr_device_info = coordinator.devices_info()
-        self.entity_id = f'sensor.{self._megad.id}_port{port.conf.id}_analog'
+        self.entity_id = f'{self._domain}.{self._megad.id}_port{port.conf.id}_analog'
 
     def __repr__(self) -> str:
         if not self.hass:
@@ -478,6 +647,11 @@ class AnalogSensorMegaD(CoordinatorEntity, SensorEntity):
         """Возвращает состояние сенсора"""
         return self._port.state
 
+    @cached_property
+    def domain(self) -> str:
+        """Возвращает пространство имен сущности"""
+        return self._domain
+
 
 class PIDSensorMegaD(CoordinatorEntity, SensorEntity):
 
@@ -491,9 +665,11 @@ class PIDSensorMegaD(CoordinatorEntity, SensorEntity):
         self._megad: MegaD = coordinator.megad
         self._pid: PIDControl = pid
         self.type_sensor = type_sensor
+        self._domain = getattr(pid.conf, 'domain', 'sensor')
         self._attr_name = f'{self._megad.id}_{pid.conf.id}_pid_value'
         self._attr_unique_id = unique_id
         self._attr_device_info = coordinator.devices_info()
+        self.entity_id = f'{self._domain}.{self._megad.id}_{pid.conf.id}_pid_value'
 
     def __repr__(self) -> str:
         if not self.hass:
@@ -519,4 +695,10 @@ class PIDSensorMegaD(CoordinatorEntity, SensorEntity):
         return {
             'min_value': -32767,
             'max_value': 32767,
+            'domain': self._domain
         }
+
+    @cached_property
+    def domain(self) -> str:
+        """Возвращает пространство имен сущности"""
+        return self._domain
