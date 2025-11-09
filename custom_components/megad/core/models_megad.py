@@ -242,6 +242,8 @@ class PortInConfig(InverseValueMixin, ActionPortMixin, BinaryDeviceClassMixin):
     mode: ModeInMegaD = Field(alias='m')
     always_send_to_server: bool = Field(alias='misc', default=False)
     device_class: DeviceClassBinary = DeviceClassBinary.NONE
+    # Добавляем поле для режима работы порта (P, R, P&R, C)
+    port_mode: str = Field(default='C')  # По умолчанию 'C' - счетчик
 
     @field_validator('mode', mode='before')
     def convert_mode(cls, value):
@@ -254,6 +256,13 @@ class PortInConfig(InverseValueMixin, ActionPortMixin, BinaryDeviceClassMixin):
                 return True
             case _:
                 return False
+
+    @model_validator(mode='before')
+    def add_port_mode(cls, data):
+        """Определяем режим работы порта на основе его конфигурации"""
+        # Здесь можно добавить логику определения режима работы порта
+        # Например, на основе других полей конфигурации
+        return data
 
 
 class PortOutConfig(PortConfig):
