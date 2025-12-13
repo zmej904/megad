@@ -1,0 +1,17 @@
+/.cloud
+/.storage
+/blueprints
+/.deps
+/.tts
+.HA_VERSION
+.ha_run.lock
+automations.yaml
+configuration.yaml
+home-assistant*
+scenes.yaml
+scripts.yaml
+secrets.yaml
+__pycache__
+/custom_components/megad/temp_data/
+/custom_components/config_megad/
+/custom_components/megad/fw_megad/

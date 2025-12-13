@@ -1,0 +1,24 @@
+{
+  "domain": "megad",
+  "name": "MegaD-2561",
+  "codeowners": ["@zmej904"],
+  "config_flow": true,
+  "dependencies": ["http", "zeroconf", "network"],
+  "documentation": "https://github.com/zmej904/megad",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/zmej904/megad/issues",
+  "requirements": [
+    "beautifulsoup4",
+    "lxml",
+    "aiofiles"
+  ],
+  "version": "v2025.11.1",
+  "services": [
+    "restart_megad",
+    "reset_megad_network", 
+    "get_watchdog_status",
+    "sync_states",
+    "force_check_megad"
+  ]
+}

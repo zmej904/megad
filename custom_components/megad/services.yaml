@@ -1,0 +1,59 @@
+sync_states:
+  name: Sync States
+  description: Синхронизировать состояния всех сущностей MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+restart_megad:
+  name: Restart MegaD
+  description: Перезагрузить контроллер MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+reset_megad_network:
+  name: Reset MegaD Network
+  description: Сбросить сетевой интерфейс контроллера MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+get_watchdog_status:
+  name: Get Watchdog Status
+  description: Получить статус watchdog для контроллера MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+force_check_megad:
+  name: Force Check MegaD
+  description: Принудительная проверка доступности MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad

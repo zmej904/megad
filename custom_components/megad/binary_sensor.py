@@ -1,0 +1,181 @@
+import logging
+
+from propcache import cached_property
+
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass, BinarySensorEntity
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from . import MegaDCoordinator
+from .const import DOMAIN, ENTRIES, CURRENT_ENTITY_IDS
+from .core.base_ports import BinaryPortIn, I2CExtraMCP230xx
+from .core.enums import DeviceClassBinary
+from .core.megad import MegaD
+from .core.models_megad import MCP230PortInConfig
+
+_LOGGER = logging.getLogger(__name__)
+
+
+async def async_setup_entry(
+        hass: HomeAssistant,
+        config_entry: ConfigEntry,
+        async_add_entities: AddEntitiesCallback
+) -> None:
+    entry_id = config_entry.entry_id
+    coordinator = hass.data[DOMAIN][ENTRIES][entry_id]
+    megad = coordinator.megad
+
+    binary_sensors = []
+    for port in megad.ports:
+        if isinstance(port, BinaryPortIn):
+            unique_id = f'{entry_id}-{megad.id}-{port.conf.id}-binary'
+            binary_sensors.append(BinarySensorMegaD(
+                coordinator, port, unique_id)
+            )
+        if isinstance(port, I2CExtraMCP230xx):
+            for config in port.extra_confs:
+                if isinstance(config, MCP230PortInConfig):
+                    unique_id = (f'{entry_id}-{megad.id}-{port.conf.id}-'
+                                 f'ext{config.id}-binary')
+                    binary_sensors.append(BinarySensorExtraMegaD(
+                        coordinator, port, config, unique_id
+                    ))
+    for binary_sensor in binary_sensors:
+        hass.data[DOMAIN][CURRENT_ENTITY_IDS][entry_id].append(
+            binary_sensor.unique_id)
+    if binary_sensors:
+        async_add_entities(binary_sensors)
+        _LOGGER.debug(f'Добавлены бинарные сенсоры: {binary_sensors}')
+
+
+class BinarySensorMegaD(CoordinatorEntity, BinarySensorEntity):
+    def __init__(self, coordinator: MegaDCoordinator, port: BinaryPortIn, unique_id: str) -> None:
+        super().__init__(coordinator)
+        self._megad: MegaD = coordinator.megad
+        self._port: BinaryPortIn = port
+        self._attr_unique_id = unique_id
+        self._attr_name = port.conf.name
+        # Индивидуальный device_info для каждой сущности
+        self._attr_device_info = coordinator.entity_device_info(
+            unique_id, 
+            port.conf.name,
+            f"MegaD-{self._megad.id} Binary Sensor"
+        )
+        self.entity_id = f'binary_sensor.{self._megad.id}_port{port.conf.id}'
+        self._attr_has_entity_name = True
+
+    def __repr__(self) -> str:
+        if not self.hass:
+            return f"<Binary sensor entity {self.entity_id}>"
+        return super().__repr__()
+
+    @property
+    def name(self) -> str:
+        return self._attr_name
+
+    @property
+    def unique_id(self) -> str:
+        return self._attr_unique_id
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if the binary sensor is on."""
+        return self._port.state
+
+    @cached_property
+    def device_class(self) -> BinarySensorDeviceClass | None:
+        """Return the class of this entity."""
+        if not hasattr(self._port.conf, 'device_class'):
+            return None
+            
+        # Используем прямое сравнение без .value
+        device_class = self._port.conf.device_class
+        
+        if device_class == DeviceClassBinary.SMOKE:
+            return BinarySensorDeviceClass.SMOKE
+        elif device_class == DeviceClassBinary.DOOR:
+            return BinarySensorDeviceClass.DOOR
+        elif device_class == DeviceClassBinary.MOTION:
+            return BinarySensorDeviceClass.MOTION
+        elif device_class == DeviceClassBinary.GARAGE_DOOR:
+            return BinarySensorDeviceClass.GARAGE_DOOR
+        elif device_class == DeviceClassBinary.LOCK:
+            return BinarySensorDeviceClass.LOCK
+        elif device_class == DeviceClassBinary.MOISTURE:
+            return BinarySensorDeviceClass.MOISTURE
+        elif device_class == DeviceClassBinary.WINDOW:
+            return BinarySensorDeviceClass.WINDOW
+        else:
+            return None
+
+
+class BinarySensorExtraMegaD(CoordinatorEntity, BinarySensorEntity):
+
+    def __init__(
+            self, coordinator: MegaDCoordinator, port: I2CExtraMCP230xx,
+            config_extra_port: MCP230PortInConfig, unique_id: str
+    ) -> None:
+        super().__init__(coordinator)
+        self._megad: MegaD = coordinator.megad
+        self._port: I2CExtraMCP230xx = port
+        self._config_extra_port = config_extra_port
+        self._attr_name = config_extra_port.name
+        self._attr_unique_id = unique_id
+        # Используем entity_device_info для отдельных сущностей
+        self._attr_device_info = coordinator.entity_device_info(
+            unique_id,
+            config_extra_port.name,
+            f"MegaD-{self._megad.id} Extra Binary Sensor"
+        )
+        self.entity_id = (f'binary_sensor.{self._megad.id}_'
+                          f'port{port.conf.id}_ext{config_extra_port.id}')
+        self._attr_has_entity_name = True
+
+    def __repr__(self) -> str:
+        if not self.hass:
+            return f"<Binary sensor entity {self.entity_id}>"
+        return super().__repr__()
+
+    @property
+    def name(self) -> str:
+        return self._attr_name
+
+    @property
+    def unique_id(self) -> str:
+        return self._attr_unique_id
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if the binary sensor is on."""
+        if self._port.state:
+            return bool(self._port.state.get(self._config_extra_port.id))
+        return False
+
+    @cached_property
+    def device_class(self) -> BinarySensorDeviceClass | None:
+        """Return the class of this entity."""
+        if not hasattr(self._config_extra_port, 'device_class'):
+            return None
+            
+        # Используем прямое сравнение без .value
+        device_class = self._config_extra_port.device_class
+        
+        if device_class == DeviceClassBinary.SMOKE:
+            return BinarySensorDeviceClass.SMOKE
+        elif device_class == DeviceClassBinary.DOOR:
+            return BinarySensorDeviceClass.DOOR
+        elif device_class == DeviceClassBinary.MOTION:
+            return BinarySensorDeviceClass.MOTION
+        elif device_class == DeviceClassBinary.GARAGE_DOOR:
+            return BinarySensorDeviceClass.GARAGE_DOOR
+        elif device_class == DeviceClassBinary.LOCK:
+            return BinarySensorDeviceClass.LOCK
+        elif device_class == DeviceClassBinary.MOISTURE:
+            return BinarySensorDeviceClass.MOISTURE
+        elif device_class == DeviceClassBinary.WINDOW:
+            return BinarySensorDeviceClass.WINDOW
+        else:
+            return None
