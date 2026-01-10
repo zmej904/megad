@@ -1,0 +1,167 @@
+# ==============================================
+# ПРОСТЫЕ И РАБОЧИЕ СКРИПТЫ
+# ==============================================
+
+# ОСНОВНОЙ СКРИПТ: Полная диагностика
+megad_full_diagnostic:
+  alias: "Полная диагностика MegaD"
+  sequence:
+    - service: persistent_notification.create
+      data:
+        title: "Диагностика MegaD"
+        message: "Запуск полной диагностики..."
+        notification_id: "megad_diagnostic_start"
+    - service: megad.check_connection
+      data: {}
+    - delay:
+        seconds: 3
+    - service: megad.check_activity
+      data: {}
+    - delay:
+        seconds: 3
+    - service: megad.get_megad_info
+      data: {}
+    - service: persistent_notification.create
+      data:
+        title: "Диагностика завершена"
+        message: "Полная диагностика MegaD завершена"
+        notification_id: "megad_diagnostic_complete"
+
+# БЫСТРАЯ ПРОВЕРКА
+megad_quick_check:
+  alias: "Быстрая проверка MegaD"
+  sequence:
+    - service: megad.check_connection
+      data: {}
+    - delay:
+        seconds: 2
+    - service: megad.check_activity
+      data: {}
+
+# ПЕРЕЗАГРУЗКА КОНТРОЛЛЕРА
+megad_simple_reboot:
+  alias: "Перезагрузить MegaD"
+  fields:
+    entity_id:
+      description: "Entity ID контроллера"
+      required: false
+  sequence:
+    - service: persistent_notification.create
+      data:
+        title: "Перезагрузка MegaD"
+        message: "Начало перезагрузки контроллера"
+        notification_id: "megad_reboot_start"
+    - service: megad.megad_reboot
+      data: {}
+    - delay:
+        minutes: 2
+    - service: megad.check_connection
+      data: {}
+    - service: persistent_notification.create
+      data:
+        title: "Перезагрузка завершена"
+        message: "Перезагрузка контроллера завершена"
+        notification_id: "megad_reboot_complete"
+
+# ВОССТАНОВЛЕНИЕ ОБРАТНОЙ СВЯЗИ
+megad_feedback_restore:
+  alias: "Восстановить обратную связь"
+  fields:
+    entity_id:
+      description: "Entity ID контроллера"
+      required: false
+  sequence:
+    - service: persistent_notification.create
+      data:
+        title: "Восстановление обратной связи"
+        message: "Начало восстановления обратной связи"
+        notification_id: "megad_feedback_start"
+    - service: megad.restore_feedback
+      data: {}
+    - delay:
+        seconds: 30
+    - service: megad.check_activity
+      data: {}
+    - service: persistent_notification.create
+      data:
+        title: "Восстановление завершено"
+        message: "Восстановление обратной связи завершено"
+        notification_id: "megad_feedback_complete"
+
+# СИНХРОНИЗАЦИЯ СОСТОЯНИЙ
+megad_sync_all:
+  alias: "Синхронизировать состояния"
+  sequence:
+    - service: persistent_notification.create
+      data:
+        title: "Синхронизация состояний"
+        message: "Начало синхронизации состояний"
+        notification_id: "megad_sync_start"
+    - service: megad.sync_states
+      data: {}
+    - delay:
+        seconds: 10
+    - service: persistent_notification.create
+      data:
+        title: "Синхронизация завершена"
+        message: "Синхронизация состояний завершена"
+        notification_id: "megad_sync_complete"
+
+# ==============================================
+# ЕЖЕДНЕВНЫЕ ПРОВЕРКИ
+# ==============================================
+
+megad_daily_check:
+  alias: "Ежедневная проверка MegaD"
+  sequence:
+    - service: megad.check_connection
+      data: {}
+    - delay:
+        seconds: 5
+    - service: megad.check_activity
+      data: {}
+    - service: persistent_notification.create
+      data:
+        title: "Ежедневная проверка"
+        message: "Ежедневная проверка MegaD завершена"
+        notification_id: "megad_daily_check"
+
+# ==============================================
+# ОЧИСТКА УВЕДОМЛЕНИЙ
+# ==============================================
+
+megad_cleanup_notifications:
+  alias: "Очистить уведомления MegaD"
+  sequence:
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: "megad_diagnostic_start"
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: "megad_diagnostic_complete"
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: "megad_reboot_start"
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: "megad_reboot_complete"
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: "megad_feedback_start"
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: "megad_feedback_complete"
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: "megad_sync_start"
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: "megad_sync_complete"
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: "megad_daily_check"
+    - service: persistent_notification.create
+      data:
+        title: "Очистка завершена"
+        message: "Уведомления MegaD очищены"
+        notification_id: "megad_cleanup_done"

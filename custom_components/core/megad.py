@@ -1,0 +1,814 @@
+import asyncio
+import logging
+import os
+from datetime import datetime
+from http import HTTPStatus
+from typing import Union
+
+import aiofiles.os as aios
+import async_timeout
+from aiohttp import ClientResponse
+
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from .base_pids import PIDControl
+from .base_ports import (
+    BinaryPortIn, RelayPortOut, PWMPortOut, BinaryPortClick, BinaryPortCount,
+    BasePort, OneWireSensorPort, DHTSensorPort, OneWireBusSensorPort,
+    I2CSensorSCD4x, I2CSensorSTH31, AnalogSensor, I2CSensorHTUxxD,
+    I2CSensorMBx280, I2CExtraMCP230xx, I2CExtraPCA9685, ReaderPort,
+    I2CSensorINA226, I2CSensorBH1750, I2CSensorILLUM, I2CSensorMAX44009,
+    I2CSensorTSL2591, I2CSensorT67xx, I2CSensorBMP180, I2CSensorPT,
+    I2CDisplayPort, I2CSensorOPT3001
+)
+from .config_parser import (
+    get_uptime, async_get_page_config, get_temperature_megad,
+    get_version_software, async_get_page_port, get_set_temp_thermostat,
+    get_status_thermostat, async_get_page, get_params_pid, get_latest_version,
+    get_names_i2c
+)
+from .const_fw import FW_PATH
+from .enums import (
+    TypePortMegaD, ModeInMegaD, ModeOutMegaD, TypeDSensorMegaD, DeviceI2CMegaD,
+    ModeI2CMegaD, ModeSensorMegaD, ModeWiegandMegaD
+)
+from .exceptions import (
+    MegaDBusy, InvalidPasswordMegad, FirmwareUpdateInProgress
+)
+from .models_megad import DeviceMegaD, PIDConfig, LatestVersionMegaD
+from .request_to_ablogru import FirmwareChecker
+from ..const import (
+    MAIN_CONFIG, START_CONFIG, TIME_OUT_UPDATE_DATA, PORT, COMMAND, ALL_STATES,
+    LIST_STATES, SCL_PORT, I2C_DEVICE, TIME_SLEEP_REQUEST, SET_TEMPERATURE,
+    STATUS_THERMO, CONFIG, PID, NOT_AVAILABLE, PID_E, PID_SET_POINT, PID_INPUT,
+    PID_OFF, CRON, SET_TIME, MCP_MODUL, PCA_MODUL, GET_STATUS, SCAN,
+    I2C_PARAMETER
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class MegaD:
+    """Класс контроллера MegaD"""
+
+    def __init__(
+            self,
+            hass: HomeAssistant,
+            config: DeviceMegaD,
+            url: str,
+            config_path: str,
+            fw_checker: FirmwareChecker,
+    ):
+        self.hass = hass
+        self.fw_checker: FirmwareChecker = fw_checker
+        self.session = async_get_clientsession(hass)
+        self.config: DeviceMegaD = config
+        self.id = config.plc.megad_id
+        self.pids: list[PIDControl] = []
+        self.ports: list[Union[
+            BinaryPortIn, BinaryPortClick, BinaryPortCount, RelayPortOut,
+            PWMPortOut, OneWireSensorPort, DHTSensorPort, OneWireBusSensorPort,
+            I2CSensorSCD4x, I2CSensorSTH31, I2CSensorHTUxxD, AnalogSensor,
+            I2CSensorMBx280, I2CExtraMCP230xx, I2CExtraPCA9685, ReaderPort,
+            I2CSensorINA226, I2CSensorBH1750, I2CSensorMAX44009,
+            I2CSensorTSL2591, I2CSensorT67xx, I2CSensorBMP180, I2CSensorPT,
+            I2CDisplayPort, I2CSensorOPT3001
+        ]] = []
+        self.extra_ports: list[Union[I2CExtraMCP230xx, I2CExtraPCA9685]]
+        self.config_ports_bus_i2c = []
+        self.url: str = url
+        self.config_path: str = config_path
+        self.domain: str = url.split('/')[2]
+        self.uptime: int = 0
+        self.temperature: float = 0
+        self._port_states = {}  # Кэш состояний портов
+        self._ext_port_states = {}  # Кэш для дополнительных портов
+        self.software: str | None = None
+        self.lt_version_sw: LatestVersionMegaD = LatestVersionMegaD()
+        self.lt_version_sw_local: LatestVersionMegaD = LatestVersionMegaD()
+        self.is_flashing = False
+        self.is_available = False
+        self.init_ports()
+        self.init_pids()
+        _LOGGER.debug(f'Создан объект MegaD: {self}')
+
+    def __repr__(self):
+        return (f"<MegaD(id={self.config.plc.megad_id}, "
+                f"ip={self.config.plc.ip_megad}, ports={self.ports})>")
+    
+    async def update_port_state_internal(self, port_id: int, state: any) -> None:
+        """Безопасное обновление состояния порта через внутренние атрибуты."""
+        port = self.get_port(port_id)
+        if not port:
+            _LOGGER.warning(f"Порт {port_id} не найден для обновления состояния")
+            return
+
+        # Сохраняем состояние в кэше
+        self._port_states[port_id] = state
+        
+        # Способ 1: Если у порта есть атрибут _state (внутренний)
+        if hasattr(port, '_state'):
+            port._state = state
+            _LOGGER.debug(f"Обновлен порт {port_id} через _state: {state}")
+        
+        # Способ 2: Если у порта есть метод update_state
+        elif hasattr(port, 'update_state') and callable(port.update_state):
+            port.update_state(state)
+            _LOGGER.debug(f"Обновлен порт {port_id} через update_state: {state}")
+        
+        # Способ 3: Попытка прямого обновления через object.__setattr__
+        else:
+            try:
+                object.__setattr__(port, 'state', state)
+                _LOGGER.debug(f"Обновлен порт {port_id} через __setattr__: {state}")
+            except (AttributeError, TypeError) as e:
+                _LOGGER.debug(f"Не удалось обновить порт {port_id} напрямую: {e}")
+                # Используем внутренний атрибут
+                if not hasattr(port, '_internal_state'):
+                    object.__setattr__(port, '_internal_state', state)
+                else:
+                    port._internal_state = state
+                _LOGGER.debug(f"Обновлен порт {port_id} через _internal_state: {state}")
+
+    async def update_port_ext_state(self, port_id: int, ext_id: int, state: any) -> None:
+        """Безопасное обновление состояния дополнительного порта."""
+        port = self.get_port(port_id, ext=True)
+        if not port:
+            _LOGGER.warning(f"Порт {port_id} не найден для обновления доп. состояния")
+            return
+
+        # Сохраняем состояние в кэше
+        key = f"{port_id}.{ext_id}"
+        self._ext_port_states[key] = state
+        
+        # Для расширителей портов
+        if isinstance(port, (I2CExtraMCP230xx, I2CExtraPCA9685)):
+            try:
+                # Получаем текущий словарь состояний
+                current_state = port.state
+                if isinstance(current_state, dict):
+                    # Обновляем конкретное состояние
+                    current_state[ext_id] = state
+                    port.update_state(current_state)
+                else:
+                    # Создаем новый словарь
+                    port.update_state({ext_id: state})
+                _LOGGER.debug(f"Обновлен доп. порт {key}: {state}")
+            except (AttributeError, TypeError) as e:
+                _LOGGER.warning(f"Не удалось обновить доп. порт {key}: {e}")
+                # Используем внутренний атрибут
+                if not hasattr(port, '_ext_states'):
+                    object.__setattr__(port, '_ext_states', {})
+                port._ext_states[ext_id] = state
+        else:
+            _LOGGER.warning(f"Порт {port_id} не является расширителем")
+
+    def get_port_state_internal(self, port_id: int) -> any:
+        """Получение состояния порта из кэша."""
+        return self._port_states.get(port_id)
+
+    def get_ext_port_state_internal(self, port_id: int, ext_id: int) -> any:
+        """Получение состояния дополнительного порта из кэша."""
+        key = f"{port_id}.{ext_id}"
+        return self._ext_port_states.get(key)
+
+    # МОДИФИЦИРУЕМ СУЩЕСТВУЮЩИЙ МЕТОД update_port:
+    
+    def update_port(self, port_id, data):
+        """Обновить данные порта по его id"""
+        port = self.get_port(port_id)
+        if port:
+            old_state = port.state
+            port.update_state(data)
+            new_state = port.state
+            self._check_change_port(port, old_state, new_state)
+        
+            # ✅ ДОБАВЬТЕ ЭТОТ КОД для уведомления watchdog об обратной связи
+            try:
+                # Получаем координатор для этого MegaD
+                if hasattr(self, 'hass') and self.hass:
+                    from .const import DOMAIN, ENTRIES
+                    if DOMAIN in self.hass.data and ENTRIES in self.hass.data[DOMAIN]:
+                        for entry_id, coordinator in self.hass.data[DOMAIN][ENTRIES].items():
+                            if coordinator and coordinator.megad and coordinator.megad.id == self.id:
+                                if coordinator.watchdog:
+                                    coordinator.watchdog.mark_feedback_event({
+                                        "type": "port_update_from_megad",
+                                        "port": port_id,
+                                        "state": data,
+                                        "source": "megad_update_port"
+                                    })
+                                    _LOGGER.debug(f"MegaD-{self.id}: отмечено событие обратной связи для порта {port_id}")
+                                break
+            except Exception as e:
+                _LOGGER.debug(f"Ошибка при отметке события обратной связи: {e}")
+
+    # ДОБАВЛЯЕМ МЕТОД ДЛЯ БЕЗОПАСНОГО ВЫКЛЮЧЕНИЯ СВЕТА:
+    
+    async def safe_turn_off_port(self, port_id: int) -> None:
+        """Безопасное выключение порта (реле)."""
+        # 1. Отправляем команду на устройство
+        await self.set_port(port_id, 0)
+        
+        # 2. Обновляем внутреннее состояние
+        await self.update_port_state_internal(port_id, 0)
+        
+        _LOGGER.info(f"Порт {port_id} безопасно выключен")
+
+    async def safe_turn_on_port(self, port_id: int) -> None:
+        """Безопасное включение порта (реле)."""
+        # 1. Отправляем команду на устройство
+        await self.set_port(port_id, 1)
+        
+        # 2. Обновляем внутреннее состояние
+        await self.update_port_state_internal(port_id, 1)
+        
+        _LOGGER.info(f"Порт {port_id} безопасно включен")
+
+    async def check_local_software(self):
+        """Проверяет прошивку в локальном хранилище."""
+        lt_vers_local = {'name': '0'}
+        try:
+            items = await aios.listdir(FW_PATH)
+        except FileNotFoundError:
+            _LOGGER.debug(f'Путь {FW_PATH} файла прошивки не найден.')
+            return
+        for item in items:
+            item_path = os.path.join(FW_PATH, item)
+            if await aios.path.isdir(item_path):
+                files = await aios.listdir(item_path)
+                if files:
+                    file_path = os.path.join(item_path, files[0])
+                else:
+                    file_path = ''
+                    item = '0'
+                lt_vers_local['name'] = '.'.join(item.split('_'))
+                lt_vers_local['descr'] = (f'Обновление из локального файла: '
+                                          f'{file_path}')
+                lt_vers_local['short_descr'] = (f'Обновление из локального '
+                                                f'файла: {file_path}')
+                lt_vers_local['link'] = file_path
+                lt_vers_local['local'] = True
+                break
+        self.lt_version_sw_local = LatestVersionMegaD(**lt_vers_local)
+        _LOGGER.info(f'Info local update: {self.lt_version_sw_local}')
+
+    async def update_latest_software(self):
+        """Обновляет последнею доступную версию ПО контроллера."""
+        page = self.fw_checker.page_firmware
+        if page:
+            lt_vers = get_latest_version(page, self.software)
+            self.lt_version_sw = LatestVersionMegaD(**lt_vers)
+            _LOGGER.debug(f'Последняя доступная версия прошивки для '
+                          f'MegaD-{self.id}: {self.lt_version_sw.name}.')
+            _LOGGER.debug(f'Время обновление данных о доступных прошивках: '
+                          f'{self.fw_checker._last_check}')
+        else:
+            _LOGGER.debug('Нет данных о последней доступной версии прошивки на'
+                          ' сайте ab-log.ru')
+
+    async def request_to_megad(self, params) -> ClientResponse:
+        """Отправка запроса к контроллеру"""
+        if self.is_flashing:
+            _LOGGER.warning(f'Управление контроллером MegaD-{self.id}'
+                            f'{self.config.plc.ip_megad}  невозможно! '
+                            f'Идет процесс прошивки!')
+            raise FirmwareUpdateInProgress
+        async with async_timeout.timeout(TIME_OUT_UPDATE_DATA):
+            if isinstance(params, dict):
+                response = await self.session.get(url=self.url, params=params)
+            if isinstance(params, str):
+                response = await self.session.get(url=f'{self.url}?{params}')
+            _LOGGER.debug(f'Отправлен запрос контроллеру '
+                          f'id {self.id}: {params}')
+        return response
+
+    async def get_status(self, params: dict) -> str:
+        """Получение статуса по переданным параметрам"""
+        response = await self.request_to_megad(params)
+        if response.status == HTTPStatus.UNAUTHORIZED:
+            _LOGGER.error(f'Неверный пароль для устройства с id {self.id}')
+            raise InvalidPasswordMegad(f'Проверьте пароль у устройства '
+                                       f'с id {self.id}')
+        return await response.text()
+
+    async def get_status_ports(self) -> str:
+        """Запрос состояния всех портов"""
+        params = {COMMAND: ALL_STATES}
+        text = await self.get_status(params)
+        _LOGGER.debug(f'Состояние всех портов id:{self.id}: {text}')
+        return text
+
+    async def update_data(self):
+        """Обновление всех данных контроллера."""
+        if self.is_flashing:
+            _LOGGER.debug(f'Контроллер {self.config.plc.ip_megad} в процессе '
+                          f'обновления ПО. Обновление данных невозможно.')
+            return
+        await self.update_ports()
+        await self.update_current_time()
+        await asyncio.sleep(TIME_SLEEP_REQUEST)
+        page_cf0 = await async_get_page_config(
+            START_CONFIG, self.url, self.session
+        )
+        self.software = get_version_software(page_cf0)
+        _LOGGER.debug(f'Версия ПО контроллера id: {self.id}: {self.software}')
+
+        await self.fw_checker.update_page_firmwares()
+        await self.update_latest_software()
+
+        await asyncio.sleep(TIME_SLEEP_REQUEST)
+        page_cf1 = await async_get_page_config(
+            MAIN_CONFIG, self.url, self.session
+        )
+        self.uptime = get_uptime(page_cf1)
+        _LOGGER.debug(f'Время работы контроллера id:{self.id}: {self.uptime}')
+        self.temperature = get_temperature_megad(page_cf1)
+        _LOGGER.debug(f'Температура платы контролера '
+                      f'id:{self.id}: {self.temperature}')
+        if self.pids:
+            await self.update_pids()
+
+    async def update_current_time(self):
+        """Синхронизирует время контроллера с сервером раз в сутки"""
+        now = datetime.now().time()
+        control_time_min = datetime.strptime("02:00", "%H:%M").time()
+        control_time_max = datetime.strptime("02:01", "%H:%M").time()
+        if control_time_max > now >= control_time_min:
+            await self.set_current_time()
+
+    async def update_pids(self):
+        """Обновление данных ПИД регуляторов"""
+        for pid in self.pids:
+            params = {CONFIG: 11, PID: pid.conf.id}
+            page = await async_get_page(
+                params=params, url=self.url, session=self.session
+            )
+            if page != NOT_AVAILABLE:
+                params_pid = get_params_pid(page)
+                conf_pid = PIDConfig(**params_pid)
+                pid.update_state(conf_pid)
+                _LOGGER.debug(f'Обновлённые данные ПИД регулятора '
+                              f'{pid.conf.id}: {conf_pid.model_dump()}')
+
+    @staticmethod
+    def check_port_is_thermostat(port) -> bool:
+        """Проверка является ли порт термостатом"""
+        if isinstance(port, OneWireSensorPort):
+            if (
+                    port.conf.mode == ModeSensorMegaD.LESS_AND_MORE
+                    and port.conf.execute_action
+            ):
+                return True
+        return False
+
+    async def update_ports(self):
+        """Обновление данных настроенных портов"""
+        status_ports_raw = await self.get_status_ports()
+        status_ports = status_ports_raw.split(';')
+        for port in self.ports:
+            state = status_ports[port.conf.id]
+            if self.check_port_is_thermostat(port):
+                await asyncio.sleep(TIME_SLEEP_REQUEST)
+                page = await async_get_page_port(
+                    port.conf.id, self.url, self.session
+                )
+                status = get_status_thermostat(page)
+                set_temperature = get_set_temp_thermostat(page)
+                port.update_state({STATUS_THERMO: status})
+                port.conf.set_value = set_temperature
+                _LOGGER.debug(f'Состояние терморегулятора порта '
+                              f'№{port.conf.id}: статус - {status}, заданная'
+                              f'температура - {set_temperature}')
+            if state in (MCP_MODUL, PCA_MODUL):
+                await asyncio.sleep(TIME_SLEEP_REQUEST)
+                state = await self.get_status(
+                    {PORT: port.conf.id, COMMAND: GET_STATUS}
+                )
+                port.update_state(state)
+            elif state:
+                port.update_state(state)
+            elif isinstance(port, OneWireBusSensorPort):
+                await asyncio.sleep(TIME_SLEEP_REQUEST)
+                state = await self.get_status_one_wire_bus(port)
+                port.update_state(state)
+            elif isinstance(port, I2CDisplayPort):
+                continue
+            elif hasattr(port, 'prefix'):
+                if not port.prefix:
+                    continue
+                name_sensor = port.prefix.split('_')[1].lower()
+                if isinstance(port, (I2CSensorHTUxxD, I2CSensorSTH31)):
+                    state = await self.get_status_htu(port, name_sensor)
+                elif isinstance(port, (
+                        I2CSensorBH1750,
+                        I2CSensorMAX44009,
+                        I2CSensorTSL2591,
+                        I2CSensorOPT3001)):
+                    state = await self.get_status_lux(port, name_sensor)
+                elif isinstance(port, I2CSensorMBx280):
+                    state = await self.get_status_bmx280(port, name_sensor)
+                elif isinstance(port, I2CSensorSCD4x):
+                    state = await self.get_status_scd4x(port, name_sensor)
+                elif isinstance(port, I2CSensorINA226):
+                    state = await self.get_status_ina226(port, name_sensor)
+                elif isinstance(port, I2CSensorT67xx):
+                    state = await self.get_status_t67xx(port, name_sensor)
+                elif isinstance(port, I2CSensorBMP180):
+                    state = await self.get_status_bmp180(port, name_sensor)
+                elif isinstance(port, I2CSensorPT):
+                    state = await self.get_status_pt(port, name_sensor)
+
+                _LOGGER.debug(
+                    f'State {port.conf.id}{port.prefix}: {state}'
+                )
+                port.update_state(state)
+
+    async def get_status_one_wire_bus(self, port: OneWireBusSensorPort) -> str:
+        """Обновление шины сенсоров порта 1 wire"""
+        params = {PORT: port.conf.id, COMMAND: LIST_STATES}
+        text = await self.get_status(params)
+        _LOGGER.debug(f'Состояние 1 wire bus {self.id}-{port.conf.name}: '
+                      f'{text}')
+        return text
+
+    async def get_status_i2c(self, port, name_sensor, i2c_parameter=0):
+        """Получаем состояние сенсора I2C."""
+        try:
+            params = {
+                PORT: port.conf.id,
+                SCL_PORT: port.conf.scl,
+                I2C_DEVICE: name_sensor,
+                I2C_PARAMETER: i2c_parameter
+            }
+            await asyncio.sleep(TIME_SLEEP_REQUEST)
+            return await self.get_status(params)
+        except Exception as e:
+            _LOGGER.warning(f'Не удалось получить состояние сенсора '
+                            f'{name_sensor} для порта №{port.conf.id}. '
+                            f'Ошибка: {e}')
+
+    async def get_status_bmx280(
+            self, port: I2CSensorMBx280, name_sensor: str
+    ):
+        """Получаем состояние сенсоров bmx280 в виде temp/press/hum."""
+        return await self.get_status_i2c(port, name_sensor, 3)
+
+    async def get_status_htu(
+            self, port: I2CSensorHTUxxD | I2CSensorSTH31, name_sensor: str
+    ):
+        """Получаем состояние сенсоров типа HTUxxx в виде temp/hum."""
+        temperature = await self.get_status_i2c(port, name_sensor, 1)
+        humidity = await self.get_status_i2c(port, name_sensor)
+        return f'{temperature}/{humidity}'
+
+    async def get_status_lux(self, port: I2CSensorILLUM, name_sensor: str):
+        """Получаем состояние сенсоров освещённости."""
+        return await self.get_status_i2c(port, name_sensor)
+
+    async def get_status_scd4x(self, port: I2CSensorSCD4x, name_sensor: str):
+        """Обновление сенсора СО2 типа SCD4x"""
+        return await self.get_status_i2c(port, name_sensor)
+
+    async def get_status_ina226(self, port: I2CSensorINA226, name_sensor: str):
+        """Обновление сенсора тока типа INA226"""
+        return await self.get_status_i2c(port, name_sensor)
+
+    async def get_status_t67xx(self, port: I2CSensorT67xx, name_sensor: str):
+        """Обновление сенсора тока типа T67xx"""
+        return await self.get_status_i2c(port, name_sensor)
+
+    async def get_status_bmp180(self, port: I2CSensorBMP180, name_sensor: str):
+        """Обновление сенсора тока типа BMP180"""
+        return await self.get_status_i2c(port, name_sensor, 2)
+
+    async def get_status_pt(self, port: I2CSensorPT, name_sensor: str):
+        """Обновление сенсора тока типа PTsensor"""
+        await self.get_status_i2c(port, name_sensor, 1)
+        return await self.get_status_i2c(port, name_sensor, 2)
+
+    def init_ports(self):
+        """Инициализация портов. Разделение их на устройства."""
+        for port in self.config.ports:
+            if (
+                    port.type_port == TypePortMegaD.IN
+                    and (port.mode == ModeInMegaD.P_R or
+                         port.always_send_to_server)
+            ):
+                self.ports.append(BinaryPortIn(port, self.id))
+            elif (
+                    port.type_port == TypePortMegaD.IN
+                    and port.mode == ModeInMegaD.C
+            ):
+                self.ports.append(BinaryPortClick(port, self.id))
+            elif port.type_port == TypePortMegaD.IN:
+                self.ports.append(BinaryPortCount(port, self.id))
+            elif (
+                    port.type_port == TypePortMegaD.OUT
+                    and (port.mode in (ModeOutMegaD.SW, ModeOutMegaD.SW_LINK))
+            ):
+                self.ports.append(RelayPortOut(port, self.id))
+            elif (
+                    port.type_port == TypePortMegaD.OUT
+                    and (port.mode in (ModeOutMegaD.PWM, ))
+            ):
+                self.ports.append(PWMPortOut(port, self.id))
+            elif port.type_port == TypePortMegaD.DSEN:
+                match port.type_sensor:
+                    case TypeDSensorMegaD.ONEW:
+                        self.ports.append(OneWireSensorPort(port, self.id))
+                    case TypeDSensorMegaD.DHT11 | TypeDSensorMegaD.DHT22:
+                        self.ports.append(DHTSensorPort(port, self.id))
+                    case TypeDSensorMegaD.ONEWBUS:
+                        self.ports.append(OneWireBusSensorPort(port, self.id))
+                    case TypeDSensorMegaD.W26:
+                        if port.mode == ModeWiegandMegaD.D0:
+                            self.ports.append(ReaderPort(port, self.id))
+                    case TypeDSensorMegaD.iB:
+                        self.ports.append(ReaderPort(port, self.id))
+            elif (
+                    port.type_port == TypePortMegaD.I2C
+                    and port.mode == ModeI2CMegaD.SDA
+            ):
+                match port.device:
+                    case DeviceI2CMegaD.NC:
+                        self.config_ports_bus_i2c.append(port)
+                    case DeviceI2CMegaD.SCD4x:
+                        self.ports.append(I2CSensorSCD4x(port, self.id))
+                    case DeviceI2CMegaD.SHT31:
+                        self.ports.append(I2CSensorSTH31(port, self.id))
+                    case DeviceI2CMegaD.HTU21D:
+                        self.ports.append(I2CSensorHTUxxD(port, self.id))
+                    case DeviceI2CMegaD.HTU31D:
+                        self.ports.append(I2CSensorHTUxxD(port, self.id))
+                    case DeviceI2CMegaD.BMx280:
+                        self.ports.append(I2CSensorMBx280(port, self.id))
+                    case DeviceI2CMegaD.INA226:
+                        self.ports.append(I2CSensorINA226(port, self.id))
+                    case DeviceI2CMegaD.BH1750:
+                        self.ports.append(I2CSensorBH1750(port, self.id))
+                    case DeviceI2CMegaD.T67xx:
+                        self.ports.append(I2CSensorT67xx(port, self.id))
+                    case DeviceI2CMegaD.BMP180:
+                        self.ports.append(I2CSensorBMP180(port, self.id))
+                    case DeviceI2CMegaD.MAX44009:
+                        self.ports.append(I2CSensorMAX44009(port, self.id))
+                    case DeviceI2CMegaD.TSL2591:
+                        self.ports.append(I2CSensorTSL2591(port, self.id))
+                    case DeviceI2CMegaD.OPT3001:
+                        self.ports.append(I2CSensorOPT3001(port, self.id))
+                    case DeviceI2CMegaD.PTsensor:
+                        self.ports.append(I2CSensorPT(port, self.id))
+                    case DeviceI2CMegaD.MCP230XX:
+                        self.ports.append(I2CExtraMCP230xx(
+                            port, self.id, self.get_config_extra_ports(port)
+                        ))
+                    case DeviceI2CMegaD.PCA9685:
+                        self.ports.append(I2CExtraPCA9685(
+                            port, self.id, self.get_config_extra_ports(port)
+                        ))
+                    case DeviceI2CMegaD.SSD1306 | DeviceI2CMegaD.LCD1602:
+                        self.ports.append(I2CDisplayPort(port, self.id))
+                    case _:
+                        _LOGGER.info(f'Интеграция пока не поддерживает '
+                                     f'I2C устройство: {port.device.value}. '
+                                     f'Обратитесь к разработчику.')
+            elif port.type_port == TypePortMegaD.ADC:
+                self.ports.append(AnalogSensor(port, self.id))
+
+        _LOGGER.debug(f'Инициализированные порты: {self.ports}')
+        if self.config_ports_bus_i2c:
+            _LOGGER.debug(
+                f'Порты с шиной сенсоров I2C: {self.config_ports_bus_i2c}'
+            )
+
+    async def get_sensors_i2c_bus(self, config_port) -> list[str]:
+        """Получает список названий сенсоров I2C в шине."""
+        params = {COMMAND: SCAN, PORT: config_port.id}
+        response = await self.request_to_megad(params)
+        page = await response.text()
+        return get_names_i2c(page)
+
+    def get_config_extra_ports(self, port):
+        """Инициализация портов расширителя I2C."""
+        extra_ports = [
+            ext for ext in self.config.extra_ports if ext.base_port == port.id
+        ]
+        extra_ports.sort(key=lambda x: x.id)
+        return extra_ports
+
+    async def async_init_i2c_bus(self):
+        """Инициализация портов с шиной сенсоров I2C."""
+        for port in self.config_ports_bus_i2c:
+            sensor_names = await self.get_sensors_i2c_bus(port)
+            for i, sensor_name in enumerate(sensor_names):
+                match sensor_name.lower():
+                    case DeviceI2CMegaD.SCD4x.value:
+                        self.ports.append(
+                            I2CSensorSCD4x(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.SHT31.value:
+                        self.ports.append(
+                            I2CSensorSTH31(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.HTU21D.value:
+                        self.ports.append(
+                            I2CSensorHTUxxD(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.HTU31D.value:
+                        self.ports.append(
+                            I2CSensorHTUxxD(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.BMx280.value:
+                        self.ports.append(
+                            I2CSensorMBx280(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.INA226.value:
+                        self.ports.append(
+                            I2CSensorINA226(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.BH1750.value:
+                        self.ports.append(
+                            I2CSensorBH1750(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.MAX44009.value:
+                        self.ports.append(
+                            I2CSensorMAX44009(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.TSL2591.value:
+                        self.ports.append(
+                            I2CSensorTSL2591(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.OPT3001.value:
+                        self.ports.append(
+                            I2CSensorOPT3001(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.T67xx.value:
+                        self.ports.append(
+                            I2CSensorT67xx(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.BMP180.value:
+                        self.ports.append(
+                            I2CSensorBMP180(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case DeviceI2CMegaD.PTsensor.value:
+                        self.ports.append(
+                            I2CSensorPT(port, self.id, f'_{sensor_name}_{i}')
+                        )
+                    case _:
+                        _LOGGER.info(f'Интеграция пока не поддерживает в шине '
+                                     f'I2C устройство: {sensor_name}. '
+                                     f'Обратитесь к разработчику.')
+
+    def init_pids(self, ):
+        """Инициализация ПИД регуляторов."""
+        for pid in self.config.pids:
+            if pid.output != PID_OFF and pid.sensor_id is not None:
+                self.pids.append(PIDControl(pid, self.id))
+        _LOGGER.debug(f'Инициализированные ПИД регуляторы: {self.pids}')
+
+    def update_port(self, port_id, data):
+        """Обновить данные порта по его id"""
+        port = self.get_port(port_id)
+        if port:
+            old_state = port.state
+            port.update_state(data)
+            new_state = port.state
+            self._check_change_port(port, old_state, new_state)
+
+    def update_pid(self, pid_id, data):
+        """Обновить данные ПИД регулятора по его id."""
+        pid = self.get_pid(pid_id)
+        if pid:
+            pid.update_state(data)
+        
+            # ✅ ДОБАВЬТЕ ЭТОТ КОД для уведомления watchdog
+            try:
+                if hasattr(self, 'hass') and self.hass:
+                    from .const import DOMAIN, ENTRIES
+                    if DOMAIN in self.hass.data and ENTRIES in self.hass.data[DOMAIN]:
+                        for entry_id, coordinator in self.hass.data[DOMAIN][ENTRIES].items():
+                            if coordinator and coordinator.megad and coordinator.megad.id == self.id:
+                                if coordinator.watchdog:
+                                    coordinator.watchdog.mark_feedback_event({
+                                        "type": "pid_update_from_megad",
+                                        "pid": pid_id,
+                                        "data": data,
+                                        "source": "megad_update_pid"
+                                    })
+                                break
+            except Exception as e:
+                _LOGGER.debug(f"Ошибка при отметке события обратной связи для PID: {e}")
+
+    def get_port_interrupt(self, port_id: int):
+        """Проверяет, является ли порт прерыванием для расширителя портов."""
+        for port in self.ports:
+            if isinstance(port, I2CExtraMCP230xx):
+                if port.conf.interrupt == port_id:
+                    return port
+
+    def get_port(self, port_id, ext=False):
+        """Получить порт по его id."""
+        if ext:
+            port_ext = self.get_port_interrupt(int(port_id))
+            if port_ext is not None:
+                return port_ext
+        return next(
+            (port for port in self.ports
+             if port.conf.id == int(port_id)),
+            None
+        )
+
+    def get_pid(self, pid_id):
+        """Получить ПИД по его id."""
+        return next(
+            (pid for pid in self.pids
+             if pid.conf.id == int(pid_id)),
+            None
+        )
+
+    async def set_pid(self, pid_id: int, commands: dict):
+        """Установка новых параметров ПИД регулятора."""
+        params = {CONFIG: 11, PID_E: 2, PID: pid_id}
+        params.update(commands)
+        response = await self.request_to_megad(params)
+        text = await response.text(encoding='windows-1251')
+        match text:
+            case 'busy':
+                _LOGGER.warning(f'Не удалось изменить параметры ПИД №{pid_id} '
+                                f'на {commands}')
+                raise MegaDBusy
+            case _:
+                _LOGGER.debug(f'Параметры ПИД №{pid_id} (MegaD-{self.id}) '
+                              f'успешно изменены на {commands}')
+
+    async def set_current_time(self):
+        """Установка текущего времени сервера на контроллер."""
+        now = datetime.now()
+        formatted_time = now.strftime("%H:%M:%S:") + str(now.isoweekday())
+        params = {CONFIG: CRON, SET_TIME: formatted_time}
+        response = await self.request_to_megad(params)
+        if response.status == HTTPStatus.OK:
+            _LOGGER.debug(f'Время контроллера синхронизировано: '
+                          f'{formatted_time}')
+
+    async def set_temperature_pid(self, pid_id, temperature):
+        """Установка заданной температуры ПИД регулятора."""
+        commands = {PID_SET_POINT: temperature}
+        await self.set_pid(pid_id, commands)
+
+    async def turn_off_pid(self, pid_id):
+        """Выключение ПИД регулятора."""
+        commands = {PID_INPUT: PID_OFF}
+        await self.set_pid(pid_id, commands)
+
+    async def turn_on_pid(self, pid_id):
+        """Включение ПИД регулятора."""
+        pid = self.get_pid(pid_id)
+        commands = {PID_INPUT: pid.conf.sensor_id}
+        await self.set_pid(pid_id, commands)
+
+    async def set_temperature(self, port_id, temperature):
+        """Установка заданной температуры терморегулятора."""
+        params = {PORT: port_id, SET_TEMPERATURE: temperature}
+        response = await self.request_to_megad(params)
+        text = await response.text()
+        match text:
+            case 'busy':
+                _LOGGER.warning(f'Не удалось изменить заданную температуру '
+                                f'порта №{port_id} на {temperature}')
+                raise MegaDBusy
+            case _:
+                _LOGGER.debug(f'Заданная температура порта №{port_id} '
+                              f'изменена на {temperature}')
+
+    async def set_port(self, port_id, command):
+        """Управление выходом релейным и шим."""
+        params = {COMMAND: f'{port_id}:{command}'}
+        response = await self.request_to_megad(params)
+        text = await response.text()
+        match text:
+            case 'busy':
+                _LOGGER.warning(f'Не удалось изменить состояние порта или '
+                                f'группы портов №{port_id}. '
+                                f'Команда: {command}')
+                raise MegaDBusy
+            case _:
+                if 'g' in str(port_id):
+                    _LOGGER.debug(f'Группа портов №{port_id} изменила'
+                                  f' состояние на {command}')
+
+    def _check_change_port(
+            self, port: BasePort, old_state: str, new_state: str) -> bool:
+        """Проверяет новое и старое состояния портов."""
+        if old_state != new_state:
+            _LOGGER.debug(f'Порт №{port.conf.id} - {port.conf.name}, '
+                          f'устройства id:{self.id}, '
+                          f'изменил состояние с {old_state} на {new_state}')
+            return True
+        return False
+
+    async def send_command(self, action) -> None:
+        """Отправка команды на контроллер."""
+        params = {COMMAND: action}
+        await self.get_status(params)

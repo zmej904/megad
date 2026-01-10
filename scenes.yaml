@@ -1,0 +1,20 @@
+# Сцены для MegaD интеграции
+- name: "Контрольный вид MegaD"
+  id: megad_control_view
+  entities:
+    input_boolean.megad_maintenance_mode:
+      state: "off"
+    input_boolean.megad_notifications_enabled:
+      state: "on"
+    input_select.megad_selected_controller:
+      state: "all"
+
+- name: "Панель диагностики MegaD"
+  id: megad_diagnostic_view
+  entities:
+    input_boolean.megad_detailed_logging:
+      state: "on"
+    input_number.megad_check_interval:
+      state: "30"
+    input_boolean.megad_auto_recovery:
+      state: "on"

@@ -1,0 +1,456 @@
+- id: '1711310188646'
+  alias: Открытие двери
+  description: ''
+  triggers:
+  - type: opened
+    device_id: c7c9edf35361099dceb4611e2416fa59
+    entity_id: 1f128a6d19fc3d749fc7e41cfdd5126a
+    domain: binary_sensor
+    for:
+      hours: 0
+      minutes: 0
+      seconds: 0
+    trigger: device
+  conditions: []
+  actions:
+  - type: turn_on
+    device_id: 0cd49dc926774e4db224dac6d5ecb99d
+    entity_id: 8063a12b31d97d70da034b47dbff38d6
+    domain: light
+  - action: telegram_bot.send_message
+    data:
+      message: дверь открыта
+  - wait_for_trigger:
+    - type: not_opened
+      device_id: c7c9edf35361099dceb4611e2416fa59
+      entity_id: 1f128a6d19fc3d749fc7e41cfdd5126a
+      domain: binary_sensor
+      trigger: device
+  - action: telegram_bot.send_message
+    data:
+      message: дверь закрыта
+  - delay:
+      hours: 0
+      minutes: 1
+      seconds: 30
+      milliseconds: 0
+  - type: turn_off
+    device_id: 0cd49dc926774e4db224dac6d5ecb99d
+    entity_id: 8063a12b31d97d70da034b47dbff38d6
+    domain: light
+  mode: single
+- id: '1718802741593'
+  alias: Шторы
+  description: ''
+  triggers:
+  - hours: '10'
+    minutes: '00'
+    seconds: '00'
+    trigger: time_pattern
+  conditions:
+  - condition: not
+    conditions:
+    - condition: device
+      device_id: eaf9f7fd7ea276a018bf113835c3524d
+      domain: cover
+      entity_id: 93525e519905dc2484bb99bae08fe1e4
+      type: is_open
+  actions:
+  - device_id: eaf9f7fd7ea276a018bf113835c3524d
+    domain: cover
+    entity_id: 93525e519905dc2484bb99bae08fe1e4
+    type: open
+  mode: single
+- id: '1720973477033'
+  alias: выключение света
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - sensor.port5_click
+    to:
+    - long
+  conditions: []
+  actions:
+  - metadata: {}
+    data: {}
+    target:
+      area_id:
+      - vannaia
+      - zal
+      - kukhnia
+      - spalnia
+      - tualet
+    action: light.turn_off
+  mode: single
+- id: '1720978265306'
+  alias: Спальня ночной режим
+  description: ''
+  triggers:
+  - type: turned_on
+    device_id: 1932350878ee48958f414c9992854d5e
+    entity_id: d17c8498240e7a56a18ee05b6c9075c7
+    domain: light
+    trigger: device
+  conditions:
+  - condition: time
+    after: '15:00:00'
+    before: 06:30:00
+  actions:
+  - if:
+    - condition: not
+      conditions:
+      - condition: device
+        device_id: eaf9f7fd7ea276a018bf113835c3524d
+        domain: cover
+        entity_id: 93525e519905dc2484bb99bae08fe1e4
+        type: is_closed
+    then:
+    - device_id: eaf9f7fd7ea276a018bf113835c3524d
+      domain: cover
+      entity_id: 93525e519905dc2484bb99bae08fe1e4
+      type: close
+  mode: single
+- id: '1721237124731'
+  alias: Кнопка вентилятора
+  description: ''
+  triggers:
+  - device_id: 3ef28da810f7bf834878e9bab05e96ea
+    domain: zha
+    type: remote_button_short_press
+    subtype: button_1
+    trigger: device
+  conditions: []
+  actions:
+  - type: toggle
+    device_id: 90d322642a39e10c2381caf8c8303b3b
+    entity_id: 4e2482441a0d642d82fde3bac15a2034
+    domain: light
+  mode: single
+- id: '1721237525133'
+  alias: Вентилятор в туалете
+  description: ''
+  triggers:
+  - type: turned_on
+    device_id: 90d322642a39e10c2381caf8c8303b3b
+    entity_id: 4e2482441a0d642d82fde3bac15a2034
+    domain: light
+    trigger: device
+  conditions: []
+  actions:
+  - delay:
+      hours: 0
+      minutes: 10
+      seconds: 0
+      milliseconds: 0
+  - type: turn_off
+    device_id: 90d322642a39e10c2381caf8c8303b3b
+    entity_id: 4e2482441a0d642d82fde3bac15a2034
+    domain: light
+  mode: single
+- id: '1723140886969'
+  alias: Теплый пол
+  description: ''
+  triggers:
+  - entity_id:
+    - climate.teplyi_pol
+    to: heat_cool
+    trigger: state
+  conditions: []
+  actions:
+  - delay:
+      hours: 1
+      minutes: 0
+      seconds: 0
+      milliseconds: 0
+  - device_id: 674eecf235423e96af9954177995bde5
+    domain: climate
+    entity_id: 096ee281d029c374eb2cbec009e73018
+    type: set_hvac_mode
+    hvac_mode: 'off'
+  mode: single
+- id: '1734637826876'
+  alias: Выключение света в спальне
+  description: ''
+  triggers:
+  - entity_id:
+    - sensor.port18_click
+    to:
+    - long
+    trigger: state
+  conditions: []
+  actions:
+  - target:
+      area_id: spalnia
+    action: light.turn_off
+  mode: single
+- id: '1745609760099'
+  alias: протечка
+  description: ''
+  triggers:
+  - type: moist
+    device_id: 5c1bed7455b67ea7d3e8bb76908b94b6
+    entity_id: 30c94ffdd0684434a05c71963b37e4c6
+    domain: binary_sensor
+    trigger: device
+  conditions: []
+  actions:
+  - action: valve.close_valve
+    metadata: {}
+    data: {}
+    target:
+      entity_id: valve.waterswitch
+  mode: single
+- id: '1745750445193'
+  alias: Вода под ванной
+  description: ''
+  triggers:
+  - type: moist
+    device_id: d48505a12fd95de0e6f9f8372ea90b68
+    entity_id: d754e0e48287636c8b66533692b8edc4
+    domain: binary_sensor
+    trigger: device
+  conditions: []
+  actions:
+  - action: valve.close_valve
+    metadata: {}
+    data: {}
+    target:
+      device_id: 024718923ed01c5474d9a63c569f4b3e
+  mode: single
+- id: '1746380877383'
+  alias: подсветка на кухне
+  description: ''
+  triggers:
+  - type: motion
+    device_id: 06526a274719f31439cd98d883839dce
+    entity_id: 1b9accb0b39d6211dfe9a171c2ed442b
+    domain: binary_sensor
+    trigger: device
+  conditions:
+  - condition: device
+    type: is_off
+    device_id: 1dd5ab7a972eee50ca29c09769852320
+    entity_id: 9f1aa7a3afff6867380c98edee7840de
+    domain: light
+  actions:
+  - type: turn_on
+    device_id: 1dd5ab7a972eee50ca29c09769852320
+    entity_id: 9f1aa7a3afff6867380c98edee7840de
+    domain: light
+  - delay:
+      hours: 0
+      minutes: 1
+      seconds: 10
+      milliseconds: 0
+  - type: turn_off
+    device_id: 1dd5ab7a972eee50ca29c09769852320
+    entity_id: 9f1aa7a3afff6867380c98edee7840de
+    domain: light
+  mode: single
+- id: '1746385917386'
+  alias: Свет в ванной
+  description: ''
+  triggers:
+  - type: turned_on
+    device_id: 1e83c3b8b5aadd6a251b8d7ddbce2b7a
+    entity_id: 3ac6db606d21058f36039eae56cdd7b1
+    domain: light
+    trigger: device
+  conditions: []
+  actions:
+  - action: timer.start
+    metadata: {}
+    data: {}
+    target:
+      entity_id: timer.taimer
+  - wait_for_trigger:
+    - trigger: state
+      entity_id:
+      - timer.taimer
+      to: idle
+  - type: turn_off
+    device_id: 1e83c3b8b5aadd6a251b8d7ddbce2b7a
+    entity_id: 3ac6db606d21058f36039eae56cdd7b1
+    domain: light
+  mode: single
+- id: '1746387314337'
+  alias: Перезапуск таймера
+  description: ''
+  triggers:
+  - type: motion
+    device_id: a9480ced45ee488e24b3791f06a5b6b8
+    entity_id: c610502d155a22f794ed915bc18b6c82
+    domain: binary_sensor
+    trigger: device
+  conditions: []
+  actions:
+  - action: timer.start
+    metadata: {}
+    data: {}
+    target:
+      entity_id: timer.taimer
+  - action: timer.pause
+    metadata: {}
+    data: {}
+    target:
+      entity_id: timer.taimer
+  - wait_for_trigger:
+    - trigger: state
+      entity_id:
+      - binary_sensor.unknown_dvizhenie_2
+      from: 'on'
+      to: 'off'
+  - action: timer.start
+    metadata: {}
+    data: {}
+    target:
+      entity_id: timer.taimer
+  mode: single
+- id: '1747165795203'
+  alias: Полотенцесушитель выключение
+  description: ''
+  triggers:
+  - device_id: 162a1d74d0b0b0b80e0037106fcc8eb6
+    domain: climate
+    entity_id: 622d90ba4b37d4e65baa27bab360c8f4
+    type: hvac_mode_changed
+    trigger: device
+    to: heat_cool
+  conditions: []
+  actions:
+  - delay:
+      hours: 2
+      minutes: 0
+      seconds: 0
+      milliseconds: 0
+  - action: climate.turn_off
+    metadata: {}
+    data: {}
+    target:
+      device_id: 162a1d74d0b0b0b80e0037106fcc8eb6
+  mode: single
+- id: '1748364277862'
+  alias: 'Полотенцесушитель включение '
+  description: ''
+  triggers:
+  - trigger: time
+    at: '14:00:00'
+  conditions: []
+  actions:
+  - action: climate.turn_on
+    metadata: {}
+    data: {}
+    target:
+      device_id: 162a1d74d0b0b0b80e0037106fcc8eb6
+  mode: single
+- id: '1760300588623'
+  alias: уведомление о протечке под ванной
+  description: ''
+  triggers:
+  - type: moist
+    device_id: d48505a12fd95de0e6f9f8372ea90b68
+    entity_id: d754e0e48287636c8b66533692b8edc4
+    domain: binary_sensor
+    trigger: device
+  conditions: []
+  actions:
+  - action: telegram_bot.send_message
+    data:
+      message: протечка под ванной
+  mode: single
+- id: '1760301229560'
+  alias: уведомление о протечке под раковиной
+  description: ''
+  triggers:
+  - type: moist
+    device_id: 5c1bed7455b67ea7d3e8bb76908b94b6
+    entity_id: 30c94ffdd0684434a05c71963b37e4c6
+    domain: binary_sensor
+    trigger: device
+  conditions: []
+  actions:
+  - action: telegram_bot.send_message
+    data:
+      message: протечка под раковиной
+  mode: single
+- id: '1761512032548'
+  alias: витрина
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - sensor.port3_click
+    to:
+    - double
+  conditions: []
+  actions:
+  - type: toggle
+    device_id: a9e9f86967c5369a283cb906b552bda7
+    entity_id: ba31b281125ca83ed481e4b83345f973
+    domain: light
+  mode: single
+- id: '1761512905523'
+  alias: свет в зале
+  description: ''
+  triggers:
+  - trigger: event
+    event_type: mega.binary
+    event_data:
+      entity_id: binary_sensor.mega_03
+      type: long
+  conditions: []
+  actions:
+  - action: light.turn_off
+    metadata: {}
+    data: {}
+    target:
+      area_id: zal
+  mode: single
+- id: 'megad_feedback_monitor'
+  alias: "Мониторинг обратной связи MegaD"
+  description: Автоматическое восстановление при потере обратной связи
+  triggers:
+  - platform: time_pattern
+    minutes: "/10"  # Проверка каждые 10 минут
+  conditions:
+    - condition: template
+      value_template: >
+        {% set now = now().timestamp() %}
+        {% set inactive = state_attr('sensor.megad_123_feedback_status', 'inactivity_seconds') | int(0) %}
+        {{ inactive > 600 }}  # 10 минут без обратной связи
+  actions:
+    - service: megad.restart_feedback
+      data_template:
+        entity_id: "{{ states.sensor | selectattr('attributes.megad_id', 'equalto', '123') | map(attribute='entity_id') | first }}"
+    - service: persistent_notification.create
+      data:
+        title: "Автовосстановление обратной связи"
+        message: "Обратная связь восстановлена автоматически"
+        notification_id: "megad_auto_restore"
+  mode: single
+
+# ЕЖЕДНЕВНАЯ ПРОВЕРКА С УНИКАЛЬНЫМ ID:
+- id: 'megad_daily_health_check'
+  alias: "Ежедневная проверка MegaD"
+  description: Ежедневная проверка всех контроллеров
+  triggers:
+  - platform: time
+    at: "08:00:00"
+  conditions: []
+  actions:
+  - service: megad.check_activity
+    data: {}
+  mode: single
+- id: 'megad_auto_restore_on_failure'
+  alias: "Автовосстановление обратной связи"
+  description: "Автоматическое восстановление при потере обратной связи"
+  trigger:
+    platform: event
+    event_type: megad_feedback_lost
+  condition: []
+  action:
+    service: megad.restore_feedback
+    data:
+      entity_id: "{{ trigger.event.data.entity_id }}"
+  mode: single  

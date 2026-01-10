@@ -1,0 +1,44 @@
+{
+  "domain": "megad",
+  "name": "MegaD-2561",
+  "codeowners": ["@zmej904"],
+  "config_flow": true,
+  "dependencies": ["http", "zeroconf", "network"],
+  "documentation": "https://github.com/zmej904/megad",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/zmej904/megad/issues",
+  "requirements": [
+    "beautifulsoup4",
+    "lxml",
+    "aiofiles"
+  ],
+  "version": "v2025.11.1",
+  "services": [
+    "restart_megad",
+    "reset_megad_network", 
+    "get_watchdog_status",
+    "sync_states",
+    "force_check_megad",
+    "check_activity",
+    "test_watchdog",
+    "restart_feedback",
+    "test_feedback",
+    "get_feedback_status",
+    "diagnose_megad",
+    "configure_watchdog"
+  ],
+  "loggers": ["megad"],
+  "quality_scale": "platinum",
+  "ssdp": [],
+  "homekit": {},
+  "after_dependencies": ["recorder"],
+  "config_schema": {
+    "url": "str",
+    "file_path": "str"
+  },
+  "single_config_entry": true,
+  "is_built_in": false,
+  "supported_brands": ["MegaD"],
+  "supported_features": ["watchdog", "feedback_monitoring", "auto_recovery"]
+}

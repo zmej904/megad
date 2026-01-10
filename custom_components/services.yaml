@@ -1,0 +1,72 @@
+# Основные сервисы MegaD
+megad_reboot:
+  name: "MegaD Reboot"
+  description: "Перезагрузить контроллер MegaD (HTTP команда /sec/?restart=1)"
+  fields:
+    entity_id:
+      name: "Entity ID"
+      description: "Entity ID контроллера MegaD (опционально - если не указан, перезагружает все)"
+      required: false
+      selector:
+        entity:
+          integration: megad
+
+check_connection:
+  name: "Check Connection"
+  description: "Проверить HTTP соединение с контроллером MegaD (/sec/?cmd=id)"
+  fields:
+    entity_id:
+      name: "Entity ID"
+      description: "Entity ID контроллера MegaD (опционально)"
+      required: false
+      selector:
+        entity:
+          integration: megad
+
+restore_feedback:
+  name: "Restore Feedback"
+  description: "Восстановить обратную связь (перезагрузка контроллера)"
+  fields:
+    entity_id:
+      name: "Entity ID"
+      description: "Entity ID контроллера MegaD (опционально)"
+      required: false
+      selector:
+        entity:
+          integration: megad
+
+get_megad_info:
+  name: "Get MegaD Info"
+  description: "Получить информацию о контроллере MegaD"
+  fields:
+    entity_id:
+      name: "Entity ID"
+      description: "Entity ID контроллера MegaD (опционально)"
+      required: false
+      selector:
+        entity:
+          integration: megad
+
+check_activity:
+  name: "Check Activity"
+  description: "Проверить активность контроллеров MegaD через watchdog"
+  fields:
+    entity_id:
+      name: "Entity ID"
+      description: "Entity ID контроллера MegaD (опционально)"
+      required: false
+      selector:
+        entity:
+          integration: megad
+
+sync_states:
+  name: "Sync States"
+  description: "Синхронизировать состояния всех сущностей MegaD"
+  fields:
+    entity_id:
+      name: "Entity ID"
+      description: "Entity ID контроллера MegaD (опционально)"
+      required: false
+      selector:
+        entity:
+          integration: megad

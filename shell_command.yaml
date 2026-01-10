@@ -1,0 +1,80 @@
+# ==============================================
+# ОСНОВНЫЕ КОМАНДЫ ДЛЯ MEGAD
+# ==============================================
+
+# Проверка доступности контроллера
+ping_megad: 'ping -c 2 -W 2 {{ "{{ ip_address }}" }} > /dev/null 2>&1 && echo "OK" || echo "FAILED"'
+
+# Проверка HTTP соединения
+check_megad_http: 'curl -s --max-time 3 "http://{{ "{{ ip_address }}" }}/sec/?cmd=id" | grep -q "MegaD" && echo "OK" || echo "FAILED"'
+
+# Перезагрузка контроллера
+reboot_megad: 'curl -s --max-time 2 "http://{{ "{{ ip_address }}" }}/sec/?restart=1" > /dev/null && echo "REBOOT_STARTED" || echo "FAILED"'
+
+# Получение версии прошивки
+get_megad_version: 'curl -s --max-time 3 "http://{{ "{{ ip_address }}" }}/sec/?cmd=ver" || echo "UNKNOWN"'
+
+# Получение времени работы
+get_megad_uptime: 'curl -s --max-time 3 "http://{{ "{{ ip_address }}" }}/sec/?cmd=uptime" || echo "UNKNOWN"'
+
+# ==============================================
+# КОМАНДЫ ДЛЯ ЛОГИРОВАНИЯ И ДИАГНОСТИКИ
+# ==============================================
+
+# Поиск логов MegaD
+find_megad_logs: 'grep -i "megad" /config/home-assistant.log | tail -20 || echo "No MegaD logs found"'
+
+# Проверка ошибок
+check_megad_errors: 'grep -i "error.*megad\|megad.*error" /config/home-assistant.log | tail -10 || echo "No errors"'
+
+# Быстрая проверка состояния
+quick_megad_status: |
+  IP="{{ "{{ ip_address }}" }}"
+  echo "=== MegaD Status: $IP ==="
+  echo -n "Ping: "
+  ping -c 1 -W 2 $IP > /dev/null 2>&1 && echo "✅ OK" || echo "❌ FAILED"
+  echo -n "HTTP: "
+  curl -s --max-time 3 "http://$IP/sec/?cmd=id" > /dev/null 2>&1 && echo "✅ OK" || echo "❌ FAILED"
+  echo -n "Version: "
+  curl -s --max-time 3 "http://$IP/sec/?cmd=ver" || echo "UNKNOWN"
+
+# ==============================================
+# СЕТЕВЫЕ КОМАНДЫ
+# ==============================================
+
+# Сканирование портов
+scan_megad_ports: |
+  IP="{{ "{{ ip_address }}" }}"
+  echo "Scanning $IP..."
+  for PORT in 80 8080 8082 8123; do
+    timeout 1 bash -c "echo >/dev/tcp/$IP/$PORT" 2>/dev/null && echo "Port $PORT: OPEN" || echo "Port $PORT: CLOSED"
+  done
+
+# Проверка маршрута
+trace_megad: 'traceroute -n -m 5 {{ "{{ ip_address }}" }} 2>&1 | head -10 || echo "Traceroute not available"'
+
+# ==============================================
+# СИСТЕМНЫЕ КОМАНДЫ
+# ==============================================
+
+# Проверка памяти HA
+check_ha_memory: 'free -h | grep Mem || echo "Memory info not available"'
+
+# Проверка диска
+check_disk_usage: 'df -h /config | tail -1 || echo "Disk info not available"'
+
+# Время работы системы
+get_system_uptime: 'uptime || echo "Uptime not available"'
+
+# ==============================================
+# ВСПОМОГАТЕЛЬНЫЕ КОМАНДЫ
+# ==============================================
+
+# Проверка интернета
+check_internet: 'ping -c 1 -W 2 8.8.8.8 > /dev/null 2>&1 && echo "Internet: OK" || echo "Internet: FAILED"'
+
+# Дата и время
+get_datetime: 'date "+%Y-%m-%d %H:%M:%S"'
+
+# Перезапуск HA
+restart_ha: 'ha core restart 2>&1 || echo "Failed to restart HA"'
