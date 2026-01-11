@@ -143,11 +143,24 @@ class MegaDWatchdog:
     
         try:
             self.coordinator._updating_watchdog = True
-            _LOGGER.debug(f"MegaD-{self.megad.id}: обновление слушателей")
-            self.coordinator.async_update_listeners()
+        
+            # ✅ ВАЖНОЕ ИСПРАВЛЕНИЕ: Проверяем, что async_update_listeners существует
+            if hasattr(self.coordinator, 'async_update_listeners'):
+                _LOGGER.debug(f"MegaD-{self.megad.id}: обновление слушателей через async_update_listeners")
+                self.coordinator.async_update_listeners()
+            elif hasattr(self.coordinator, 'update_listeners'):
+                _LOGGER.debug(f"MegaD-{self.megad.id}: обновление слушателей через update_listeners")
+                self.coordinator.update_listeners()
+            else:
+                _LOGGER.warning(f"MegaD-{self.megad.id}: метод обновления слушателей не найден")
+                return
+            
             self._last_update_time = now
+        
         except Exception as e:
             _LOGGER.error(f"MegaD-{self.megad.id}: ошибка при обновлении слушателей: {e}")
+            import traceback
+            _LOGGER.error(f"Трассировка: {traceback.format_exc()}")
         finally:
             self.coordinator._updating_watchdog = False
     
