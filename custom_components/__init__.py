@@ -955,27 +955,35 @@ class MegaDCoordinator(DataUpdateCoordinator):
         """Метод для отметки событий обратной связи."""
         if not self.watchdog:
             return
-    
+
         source = event_data.get('source', 'unknown') if event_data else 'unknown'
         event_type = event_data.get('type', 'unknown') if event_data else 'unknown'
+        port = event_data.get('pt', 'unknown') if event_data else 'unknown'
     
-        # ✅ СТРОГИЙ ФИЛЬТР: Только реальные HTTP события от контроллера
+        # ✅ ИСПРАВЛЕНИЕ: Логируем ВСЕ события для отладки
+        _LOGGER.debug(
+            f"MegaD-{self.megad.id}: получено событие для mark_feedback_event - "
+            f"источник: '{source}', тип: '{event_type}', порт: '{port}'"
+        )
+    
+        # ✅ ИСПРАВЛЕНИЕ: Расширенный список разрешенных источников
         allowed_sources = [
-            'http_callback',      # Прямые HTTP callback от контроллера
-            'http_get',           # GET запросы от контроллера
-            'http_post',          # POST запросы от контроллера
-            'server_get',         # GET через server.py (от контроллера)
-            'server_post',        # POST через server.py (от контроллера)
-            'restore_after_reboot' # После восстановления контроллера
+            'http_callback', 'http_get', 'http_post',
+            'server_get', 'server_post', 'restore_after_reboot',
+            # ✅ ДОБАВЬТЕ ЭТИ НОВЫЕ ИСТОЧНИКИ:
+            'coordinator',  # События из координатора (важно!)
+            'server', 'megad_server', 'http_server',
+            'callback', 'webhook', 'ha_callback'
         ]
     
         if source in allowed_sources:
+            _LOGGER.info(f"MegaD-{self.megad.id}: передача события в watchdog (источник: {source})")
             self.watchdog.mark_feedback_event(event_data)
-            _LOGGER.debug(f"MegaD-{self.megad.id}: передано событие обратной связи (источник: {source}, тип: {event_type})")
         else:
-            _LOGGER.debug(f"MegaD-{self.megad.id}: внутреннее событие '{source}', НЕ передаем в watchdog")
-            # ❌ НЕ вызываем никаких методов watchdog для внутренних событий!
-            # Это позволяет watchdog корректно обнаруживать отсутствие реальной обратной связи
+            _LOGGER.warning(
+                f"MegaD-{self.megad.id}: источник '{source}' не разрешен! "
+                f"Событие ИГНОРИРУЕТСЯ. Разрешенные: {allowed_sources}"
+            )
     
     async def start_watchdog(self):
         """Запуск watchdog для этого контроллера."""
