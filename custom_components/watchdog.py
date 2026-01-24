@@ -84,19 +84,14 @@ class MegaDWatchdog:
             _LOGGER.debug(f"MegaD-{self.megad.id}: mark_feedback_event - защита от рекурсии")
             return
 
-        # ✅ СТРОГИЙ КОНТРОЛЬ ИСТОЧНИКА
+        # ✅ ПРОСТОЕ РЕШЕНИЕ: Принимаем ВСЕ события
         source = event_data.get('source', 'unknown') if event_data else 'unknown'
-    
-        # ✅ СТРОГИЙ СПИСОК: Только реальные HTTP события от контроллера
-        feedback_sources = [
-            'http_callback', 'http_get', 'http_post', 
-            'server_get', 'server_post', 'restore_after_reboot'
-        ]
-    
-        if source not in feedback_sources:
-            _LOGGER.debug(f"MegaD-{self.megad.id}: источник '{source}' не является обратной связью, ИГНОРИРУЕМ")
-            # ❌ НЕ ВЫЗЫВАЕМ mark_data_received()!
-            return
+        port = event_data.get('pt', 'unknown') if event_data else 'unknown'
+
+        _LOGGER.debug(f"MegaD-{self.megad.id}: получено событие обратной связи (источник: {source}, порт: {port})")
+
+        # ✅ ВАЖНО: Если событие пришло в watchdog, значит это реальная обратная связь
+        # Нет необходимости фильтровать источники!
 
         # ✅ ТОЛЬКО ТЕПЕРЬ - РЕАЛЬНАЯ ОБРАТНАЯ СВЯЗЬ ОТ КОНТРОЛЛЕРА
         self._updating_feedback = True
