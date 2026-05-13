@@ -1,3 +1,4 @@
+json
 {
   "name": "MegaD-2561",
   "render_readme": true,
@@ -6,5 +7,5 @@
   "homeassistant": "2024.1.0",
   "iot_class": "local_push",
   "zip_release": true,
-  "filename": "megad.zip"
+  "filename": "megad-2026.05.1.zip"
 }
