@@ -1,8 +1,3 @@
 {
-  "name": "MegaD-2561",
-  "render_readme": true,
-  "country": "RU",
-  "domains": ["binary_sensor", "climate", "fan", "light", "number", "sensor", "switch", "text", "update"],
-  "homeassistant": "2024.1.0",
-  "iot_class": "local_push"
+  "name": "MegaD-2561"
 }
