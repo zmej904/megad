@@ -1,0 +1,218 @@
+sync_states:
+  name: Sync States
+  description: Синхронизировать состояния всех сущностей MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+restart_megad:
+  name: Restart MegaD
+  description: Перезагрузить контроллер MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+reset_megad_network:
+  name: Reset MegaD Network
+  description: Сбросить сетевой интерфейс контроллера MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+get_watchdog_status:
+  name: Get Watchdog Status
+  description: Получить статус watchdog для контроллера MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+force_check_megad:
+  name: Force Check MegaD
+  description: Принудительная проверка доступности MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+check_activity:
+  name: Check Activity
+  description: Проверить активность контроллера и обратную связь
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+test_watchdog:
+  name: Test Watchdog
+  description: Тестирование работы watchdog
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+# ✅ НОВЫЕ СЕРВИСЫ ДЛЯ ОБРАТНОЙ СВЯЗИ
+restart_feedback:
+  name: Restart Feedback
+  description: Перезапустить службу обратной связи MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+test_feedback:
+  name: Test Feedback
+  description: Протестировать работу обратной связи MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+get_feedback_status:
+  name: Get Feedback Status
+  description: Получить детальный статус обратной связи MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+
+# ✅ ДОПОЛНИТЕЛЬНЫЙ СЕРВИС ДЛЯ ДИАГНОСТИКИ
+diagnose_megad:
+  name: Diagnose MegaD
+  description: Полная диагностика контроллера MegaD
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+    include_network_test:
+      name: Include Network Test
+      description: "Включить тестирование сети"
+      required: false
+      default: true
+      selector:
+        boolean:
+    include_feedback_test:
+      name: Include Feedback Test
+      description: "Включить тестирование обратной связи"
+      required: false
+      default: true
+      selector:
+        boolean:
+    include_port_test:
+      name: Include Port Test
+      description: "Включить тестирование портов"
+      required: false
+      default: false
+      selector:
+        boolean:
+
+# ✅ СЕРВИС ДЛЯ НАСТРОЙКИ WATCHDOG
+configure_watchdog:
+  name: Configure Watchdog
+  description: Настроить параметры watchdog для контроллера
+  fields:
+    entity_id:
+      name: Entity
+      description: "Entity ID контроллера MegaD"
+      required: true
+      selector:
+        entity:
+          integration: megad
+    inactivity_timeout:
+      name: Inactivity Timeout
+      description: "Таймаут неактивности в секундах (по умолчанию 300)"
+      required: false
+      default: 300
+      selector:
+        number:
+          min: 60
+          max: 3600
+          step: 30
+          mode: slider
+    check_interval:
+      name: Check Interval
+      description: "Интервал проверки в секундах (по умолчанию 30)"
+      required: false
+      default: 30
+      selector:
+        number:
+          min: 10
+          max: 300
+          step: 5
+          mode: slider
+    max_failures:
+      name: Max Failures
+      description: "Максимальное количество ошибок перед восстановлением (по умолчанию 3)"
+      required: false
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 10
+          step: 1
+          mode: slider
+    feedback_enabled:
+      name: Feedback Enabled
+      description: "Включить отслеживание обратной связи"
+      required: false
+      default: true
+      selector:
+        boolean:
+    feedback_timeout:
+      name: Feedback Timeout
+      description: "Таймаут обратной связи в секундах (по умолчанию 300)"
+      required: false
+      default: 300
+      selector:
+        number:
+          min: 60
+          max: 3600
+          step: 30
+          mode: slider
