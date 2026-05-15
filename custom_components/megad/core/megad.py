@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 from datetime import datetime
 from http import HTTPStatus
 from typing import Union
@@ -255,13 +256,24 @@ class MegaD:
                             f'{self.config.plc.ip_megad}  невозможно! '
                             f'Идет процесс прошивки!')
             raise FirmwareUpdateInProgress
-        async with async_timeout.timeout(TIME_OUT_UPDATE_DATA):
-            if isinstance(params, dict):
-                response = await self.session.get(url=self.url, params=params)
-            if isinstance(params, str):
-                response = await self.session.get(url=f'{self.url}?{params}')
-            _LOGGER.debug(f'Отправлен запрос контроллеру '
-                          f'id {self.id}: {params}')
+        
+        # ✅ ИСПРАВЛЕНИЕ: поддержка новых версий Python (3.11+) и старых
+        try:
+            # Для Python 3.11+ используем встроенный asyncio.timeout
+            async with asyncio.timeout(TIME_OUT_UPDATE_DATA):
+                if isinstance(params, dict):
+                    response = await self.session.get(url=self.url, params=params)
+                else:
+                    response = await self.session.get(url=f'{self.url}?{params}')
+        except AttributeError:
+            # Fallback для старых версий Python
+            async with async_timeout.timeout(TIME_OUT_UPDATE_DATA):
+                if isinstance(params, dict):
+                    response = await self.session.get(url=self.url, params=params)
+                else:
+                    response = await self.session.get(url=f'{self.url}?{params}')
+        
+        _LOGGER.debug(f'Отправлен запрос контроллеру id {self.id}: {params}')
         return response
 
     async def get_status(self, params: dict) -> str:
