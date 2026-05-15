@@ -2,6 +2,7 @@ import asyncio
 import logging
 import platform
 import socket
+import sys
 from datetime import datetime
 from typing import Optional, Callable, Any, List
 
@@ -348,40 +349,52 @@ class MegaDWatchdog:
             if verbose:
                 _LOGGER.debug(f"MegaD-{self.megad.id}: проверка настроек обратной связи: {config_url}")
             
-            async with session.get(config_url, timeout=10) as response:
-                if response.status != 200:
-                    if verbose:
-                        _LOGGER.warning(f"MegaD-{self.megad.id}: не удалось получить настройки, статус: {response.status}")
-                    return False
-                
-                text = await response.text()
-                
-                # Ищем настройки обратной связи в тексте страницы
-                feedback_keywords = [
-                    'Send To Server', 'обратная связь', 'send to server',
-                    'Отправлять на сервер', 'Отправка на сервер'
-                ]
-                
-                has_feedback_setting = any(keyword in text for keyword in feedback_keywords)
-                
-                if not has_feedback_setting:
-                    if verbose:
-                        _LOGGER.warning(f"MegaD-{self.megad.id}: настройки обратной связи не найдены на странице")
-                    return False
-                
-                # Проверяем, включена ли обратная связь
-                enabled_indicators = [
-                    'checked', 'value="1"', 'selected',
-                    'type="checkbox" checked'
-                ]
-                
-                is_enabled = any(indicator in text for indicator in enabled_indicators)
-                
+            # ✅ ИСПРАВЛЕНИЕ: поддержка таймаута для новых версий Python
+            try:
+                async with asyncio.timeout(10):
+                    async with session.get(config_url) as response:
+                        if response.status != 200:
+                            if verbose:
+                                _LOGGER.warning(f"MegaD-{self.megad.id}: не удалось получить настройки, статус: {response.status}")
+                            return False
+                        
+                        text = await response.text()
+            except AttributeError:
+                async with async_timeout.timeout(10):
+                    async with session.get(config_url) as response:
+                        if response.status != 200:
+                            if verbose:
+                                _LOGGER.warning(f"MegaD-{self.megad.id}: не удалось получить настройки, статус: {response.status}")
+                            return False
+                        
+                        text = await response.text()
+            
+            # Ищем настройки обратной связи в тексте страницы
+            feedback_keywords = [
+                'Send To Server', 'обратная связь', 'send to server',
+                'Отправлять на сервер', 'Отправка на сервер'
+            ]
+            
+            has_feedback_setting = any(keyword in text for keyword in feedback_keywords)
+            
+            if not has_feedback_setting:
                 if verbose:
-                    status = "ВКЛЮЧЕНА" if is_enabled else "ОТКЛЮЧЕНА"
-                    _LOGGER.info(f"MegaD-{self.megad.id}: обратная связь {status}")
-                
-                return is_enabled
+                    _LOGGER.warning(f"MegaD-{self.megad.id}: настройки обратной связи не найдены на странице")
+                return False
+            
+            # Проверяем, включена ли обратная связь
+            enabled_indicators = [
+                'checked', 'value="1"', 'selected',
+                'type="checkbox" checked'
+            ]
+            
+            is_enabled = any(indicator in text for indicator in enabled_indicators)
+            
+            if verbose:
+                status = "ВКЛЮЧЕНА" if is_enabled else "ОТКЛЮЧЕНА"
+                _LOGGER.info(f"MegaD-{self.megad.id}: обратная связь {status}")
+            
+            return is_enabled
                 
         except asyncio.TimeoutError:
             if verbose:
@@ -408,26 +421,51 @@ class MegaDWatchdog:
             
             _LOGGER.debug(f"MegaD-{self.megad.id}: тестирование обратной связи, команда: {test_cmd_url}")
             
-            async with session.get(test_cmd_url, timeout=5) as response:
-                if response.status == 200:
-                    text = await response.text()
-                    _LOGGER.debug(f"MegaD-{self.megad.id}: тестовая команда отправлена, ответ: {text}")
-                    
-                    # Ждем немного, чтобы событие обратной связи могло прийти
-                    await asyncio.sleep(3)
-                    
-                    # Проверяем, пришло ли ЗНАЧИМОЕ событие обратной связи
-                    if self._last_meaningful_feedback != original_meaningful_time:
-                        _LOGGER.info(f"MegaD-{self.megad.id}: обратная связь работает (значимое событие получено)")
-                        return True
-                    else:
-                        _LOGGER.warning(f"MegaD-{self.megad.id}: команда отправлена, но значимое событие обратной связи не получено")
-                        
-                        # Попробуем альтернативный порт
-                        return await self._test_feedback_alternative()
-                else:
-                    _LOGGER.warning(f"MegaD-{self.megad.id}: ошибка отправки тестовой команды, статус: {response.status}")
-                    return False
+            # ✅ ИСПРАВЛЕНИЕ: поддержка таймаута для новых версий Python
+            try:
+                async with asyncio.timeout(5):
+                    async with session.get(test_cmd_url) as response:
+                        if response.status == 200:
+                            text = await response.text()
+                            _LOGGER.debug(f"MegaD-{self.megad.id}: тестовая команда отправлена, ответ: {text}")
+                            
+                            # Ждем немного, чтобы событие обратной связи могло прийти
+                            await asyncio.sleep(3)
+                            
+                            # Проверяем, пришло ли ЗНАЧИМОЕ событие обратной связи
+                            if self._last_meaningful_feedback != original_meaningful_time:
+                                _LOGGER.info(f"MegaD-{self.megad.id}: обратная связь работает (значимое событие получено)")
+                                return True
+                            else:
+                                _LOGGER.warning(f"MegaD-{self.megad.id}: команда отправлена, но значимое событие обратной связи не получено")
+                                
+                                # Попробуем альтернативный порт
+                                return await self._test_feedback_alternative()
+                        else:
+                            _LOGGER.warning(f"MegaD-{self.megad.id}: ошибка отправки тестовой команды, статус: {response.status}")
+                            return False
+            except AttributeError:
+                async with async_timeout.timeout(5):
+                    async with session.get(test_cmd_url) as response:
+                        if response.status == 200:
+                            text = await response.text()
+                            _LOGGER.debug(f"MegaD-{self.megad.id}: тестовая команда отправлена, ответ: {text}")
+                            
+                            # Ждем немного, чтобы событие обратной связи могло прийти
+                            await asyncio.sleep(3)
+                            
+                            # Проверяем, пришло ли ЗНАЧИМОЕ событие обратной связи
+                            if self._last_meaningful_feedback != original_meaningful_time:
+                                _LOGGER.info(f"MegaD-{self.megad.id}: обратная связь работает (значимое событие получено)")
+                                return True
+                            else:
+                                _LOGGER.warning(f"MegaD-{self.megad.id}: команда отправлена, но значимое событие обратной связи не получено")
+                                
+                                # Попробуем альтернативный порт
+                                return await self._test_feedback_alternative()
+                        else:
+                            _LOGGER.warning(f"MegaD-{self.megad.id}: ошибка отправки тестовой команды, статус: {response.status}")
+                            return False
                     
         except asyncio.TimeoutError:
             _LOGGER.warning(f"MegaD-{self.megad.id}: таймаут при тестировании обратной связи")
@@ -450,22 +488,43 @@ class MegaDWatchdog:
             
             _LOGGER.debug(f"MegaD-{self.megad.id}: альтернативный тест обратной связи: {test_cmd_url}")
             
-            async with session.get(test_cmd_url, timeout=5) as response:
-                if response.status == 200:
-                    text = await response.text()
-                    
-                    # Ждем
-                    await asyncio.sleep(2)
-                    
-                    # Проверяем, было ли ЗНАЧИМОЕ событие
-                    if self._last_meaningful_feedback != original_meaningful_time:
-                        return True
-                    
-                    # Если нет события, но контроллер ответил - возможно обратная связь просто не настроена
-                    _LOGGER.warning(f"MegaD-{self.megad.id}: контроллер отвечает, но обратная связь не работает")
-                    return False
-                else:
-                    return False
+            # ✅ ИСПРАВЛЕНИЕ: поддержка таймаута для новых версий Python
+            try:
+                async with asyncio.timeout(5):
+                    async with session.get(test_cmd_url) as response:
+                        if response.status == 200:
+                            text = await response.text()
+                            
+                            # Ждем
+                            await asyncio.sleep(2)
+                            
+                            # Проверяем, было ли ЗНАЧИМОЕ событие
+                            if self._last_meaningful_feedback != original_meaningful_time:
+                                return True
+                            
+                            # Если нет события, но контроллер ответил - возможно обратная связь просто не настроена
+                            _LOGGER.warning(f"MegaD-{self.megad.id}: контроллер отвечает, но обратная связь не работает")
+                            return False
+                        else:
+                            return False
+            except AttributeError:
+                async with async_timeout.timeout(5):
+                    async with session.get(test_cmd_url) as response:
+                        if response.status == 200:
+                            text = await response.text()
+                            
+                            # Ждем
+                            await asyncio.sleep(2)
+                            
+                            # Проверяем, было ли ЗНАЧИМОЕ событие
+                            if self._last_meaningful_feedback != original_meaningful_time:
+                                return True
+                            
+                            # Если нет события, но контроллер ответил - возможно обратная связь просто не настроена
+                            _LOGGER.warning(f"MegaD-{self.megad.id}: контроллер отвечает, но обратная связь не работает")
+                            return False
+                        else:
+                            return False
                     
         except Exception:
             return False
@@ -529,38 +588,57 @@ class MegaDWatchdog:
             
             # Получаем текущие настройки
             config_url = f"{base_url}/sec/?cf=3"
-            async with session.get(config_url, timeout=10) as response:
-                if response.status != 200:
-                    return False
-                
-                text = await response.text()
-                
-                # Определяем адрес сервера Home Assistant
-                server_address = await self._get_home_assistant_address()
-                if not server_address:
-                    _LOGGER.warning(f"MegaD-{self.megad.id}: не удалось определить адрес Home Assistant")
-                    return False
-                
-                # Формируем URL для включения обратной связи
-                enable_urls = [
-                    f"{base_url}/sec/?cf=3&en=1&server={server_address}&save=1",
-                    f"{base_url}/sec/?cf=3&send=1&server={server_address}&save=1",
-                    f"{base_url}/sec/?cf=3&feedback=1&server={server_address}&save=1",
-                ]
-                
-                for url in enable_urls:
-                    try:
-                        _LOGGER.debug(f"MegaD-{self.megad.id}: попытка включения обратной связи: {url}")
-                        async with session.get(url, timeout=5) as resp:
-                            if resp.status == 200:
-                                resp_text = await resp.text()
-                                if 'saved' in resp_text.lower() or 'сохранено' in resp_text.lower():
-                                    _LOGGER.info(f"MegaD-{self.megad.id}: настройки обратной связи успешно обновлены")
-                                    return True
-                    except:
-                        continue
-                
+            
+            # ✅ ИСПРАВЛЕНИЕ: поддержка таймаута для новых версий Python
+            try:
+                async with asyncio.timeout(10):
+                    async with session.get(config_url) as response:
+                        if response.status != 200:
+                            return False
+                        text = await response.text()
+            except AttributeError:
+                async with async_timeout.timeout(10):
+                    async with session.get(config_url) as response:
+                        if response.status != 200:
+                            return False
+                        text = await response.text()
+            
+            # Определяем адрес сервера Home Assistant
+            server_address = await self._get_home_assistant_address()
+            if not server_address:
+                _LOGGER.warning(f"MegaD-{self.megad.id}: не удалось определить адрес Home Assistant")
                 return False
+            
+            # Формируем URL для включения обратной связи
+            enable_urls = [
+                f"{base_url}/sec/?cf=3&en=1&server={server_address}&save=1",
+                f"{base_url}/sec/?cf=3&send=1&server={server_address}&save=1",
+                f"{base_url}/sec/?cf=3&feedback=1&server={server_address}&save=1",
+            ]
+            
+            for url in enable_urls:
+                try:
+                    _LOGGER.debug(f"MegaD-{self.megad.id}: попытка включения обратной связи: {url}")
+                    try:
+                        async with asyncio.timeout(5):
+                            async with session.get(url) as resp:
+                                if resp.status == 200:
+                                    resp_text = await resp.text()
+                                    if 'saved' in resp_text.lower() or 'сохранено' in resp_text.lower():
+                                        _LOGGER.info(f"MegaD-{self.megad.id}: настройки обратной связи успешно обновлены")
+                                        return True
+                    except AttributeError:
+                        async with async_timeout.timeout(5):
+                            async with session.get(url) as resp:
+                                if resp.status == 200:
+                                    resp_text = await resp.text()
+                                    if 'saved' in resp_text.lower() or 'сохранено' in resp_text.lower():
+                                        _LOGGER.info(f"MegaD-{self.megad.id}: настройки обратной связи успешно обновлены")
+                                        return True
+                except:
+                    continue
+            
+            return False
                 
         except Exception as e:
             _LOGGER.error(f"MegaD-{self.megad.id}: ошибка включения обратной связи: {e}")
@@ -612,11 +690,20 @@ class MegaDWatchdog:
             for url in restart_urls:
                 try:
                     _LOGGER.debug(f"MegaD-{self.megad.id}: попытка перезапуска службы обратной связи: {url}")
-                    async with session.get(url, timeout=5) as response:
-                        if response.status == 200:
-                            text = await response.text()
-                            _LOGGER.info(f"MegaD-{self.megad.id}: команда перезапуска отправлена: {url}")
-                            return True
+                    try:
+                        async with asyncio.timeout(5):
+                            async with session.get(url) as response:
+                                if response.status == 200:
+                                    text = await response.text()
+                                    _LOGGER.info(f"MegaD-{self.megad.id}: команда перезапуска отправлена: {url}")
+                                    return True
+                    except AttributeError:
+                        async with async_timeout.timeout(5):
+                            async with session.get(url) as response:
+                                if response.status == 200:
+                                    text = await response.text()
+                                    _LOGGER.info(f"MegaD-{self.megad.id}: команда перезапуска отправлена: {url}")
+                                    return True
                 except asyncio.TimeoutError:
                     _LOGGER.info(f"MegaD-{self.megad.id}: таймаут при перезапуске службы (возможно начался перезапуск)")
                     return True
@@ -641,21 +728,41 @@ class MegaDWatchdog:
             test_url = f"{base_url}/sec/?cmd=id"
             _LOGGER.debug(f"MegaD-{self.megad.id}: проверка доступности: {test_url}")
             
-            async with session.get(test_url, timeout=3) as response:
-                if response.status == 200:
-                    text = await response.text()
-                    if text and text.strip() and 'timeout' not in text.lower():
-                        _LOGGER.debug(f"MegaD-{self.megad.id}: доступен (ping и HTTP)")
-                        return True
-                    else:
-                        _LOGGER.debug(f"MegaD-{self.megad.id}: пустой или timeout ответ")
-                        return False
-                elif response.status == 401:
-                    _LOGGER.error(f"MegaD-{self.megad.id}: ошибка аутентификации (401)")
-                    return False
-                else:
-                    _LOGGER.debug(f"MegaD-{self.megad.id}: HTTP статус {response.status}")
-                    return False
+            # ✅ ИСПРАВЛЕНИЕ: поддержка таймаута для новых версий Python
+            try:
+                async with asyncio.timeout(3):
+                    async with session.get(test_url) as response:
+                        if response.status == 200:
+                            text = await response.text()
+                            if text and text.strip() and 'timeout' not in text.lower():
+                                _LOGGER.debug(f"MegaD-{self.megad.id}: доступен (ping и HTTP)")
+                                return True
+                            else:
+                                _LOGGER.debug(f"MegaD-{self.megad.id}: пустой или timeout ответ")
+                                return False
+                        elif response.status == 401:
+                            _LOGGER.error(f"MegaD-{self.megad.id}: ошибка аутентификации (401)")
+                            return False
+                        else:
+                            _LOGGER.debug(f"MegaD-{self.megad.id}: HTTP статус {response.status}")
+                            return False
+            except AttributeError:
+                async with async_timeout.timeout(3):
+                    async with session.get(test_url) as response:
+                        if response.status == 200:
+                            text = await response.text()
+                            if text and text.strip() and 'timeout' not in text.lower():
+                                _LOGGER.debug(f"MegaD-{self.megad.id}: доступен (ping и HTTP)")
+                                return True
+                            else:
+                                _LOGGER.debug(f"MegaD-{self.megad.id}: пустой или timeout ответ")
+                                return False
+                        elif response.status == 401:
+                            _LOGGER.error(f"MegaD-{self.megad.id}: ошибка аутентификации (401)")
+                            return False
+                        else:
+                            _LOGGER.debug(f"MegaD-{self.megad.id}: HTTP статус {response.status}")
+                            return False
         except asyncio.TimeoutError:
             _LOGGER.debug(f"MegaD-{self.megad.id}: таймаут HTTP запроса")
             return False
@@ -681,12 +788,23 @@ class MegaDWatchdog:
                     test_url = f"{base_url}/sec/{cmd}" if not cmd.startswith('?') else f"{base_url}/sec{cmd}"
                     _LOGGER.debug(f"MegaD-{self.megad.id}: проверка данных: {test_url}")
                     
-                    async with session.get(test_url, timeout=5) as response:
-                        if response.status == 200:
-                            text = await response.text()
-                            if text and text.strip():
-                                _LOGGER.debug(f"MegaD-{self.megad.id}: команда {cmd} вернула данные")
-                                return True
+                    # ✅ ИСПРАВЛЕНИЕ: поддержка таймаута для новых версий Python
+                    try:
+                        async with asyncio.timeout(5):
+                            async with session.get(test_url) as response:
+                                if response.status == 200:
+                                    text = await response.text()
+                                    if text and text.strip():
+                                        _LOGGER.debug(f"MegaD-{self.megad.id}: команда {cmd} вернула данные")
+                                        return True
+                    except AttributeError:
+                        async with async_timeout.timeout(5):
+                            async with session.get(test_url) as response:
+                                if response.status == 200:
+                                    text = await response.text()
+                                    if text and text.strip():
+                                        _LOGGER.debug(f"MegaD-{self.megad.id}: команда {cmd} вернула данные")
+                                        return True
                 except asyncio.TimeoutError:
                     _LOGGER.debug(f"MegaD-{self.megad.id}: таймаут на команде {cmd}")
                     continue
@@ -868,14 +986,27 @@ class MegaDWatchdog:
             _LOGGER.info(f"MegaD-{self.megad.id}: отправка команды перезагрузки: {reboot_url}")
             
             try:
-                async with session.get(reboot_url, timeout=3) as response:
-                    if response.status == 200:
-                        text = await response.text()
-                        _LOGGER.info(f"MegaD-{self.megad.id}: команда перезагрузки отправлена, ответ: {text[:100]}")
-                        return True
-                    else:
-                        _LOGGER.warning(f"MegaD-{self.megad.id}: команда перезагрузки вернула статус {response.status}")
-                        return False
+                # ✅ ИСПРАВЛЕНИЕ: поддержка таймаута для новых версий Python
+                try:
+                    async with asyncio.timeout(3):
+                        async with session.get(reboot_url) as response:
+                            if response.status == 200:
+                                text = await response.text()
+                                _LOGGER.info(f"MegaD-{self.megad.id}: команда перезагрузки отправлена, ответ: {text[:100]}")
+                                return True
+                            else:
+                                _LOGGER.warning(f"MegaD-{self.megad.id}: команда перезагрузки вернула статус {response.status}")
+                                return False
+                except AttributeError:
+                    async with async_timeout.timeout(3):
+                        async with session.get(reboot_url) as response:
+                            if response.status == 200:
+                                text = await response.text()
+                                _LOGGER.info(f"MegaD-{self.megad.id}: команда перезагрузки отправлена, ответ: {text[:100]}")
+                                return True
+                            else:
+                                _LOGGER.warning(f"MegaD-{self.megad.id}: команда перезагрузки вернула статус {response.status}")
+                                return False
             except asyncio.TimeoutError:
                 _LOGGER.info(f"MegaD-{self.megad.id}: начал перезагрузку (таймаут)")
                 return True
@@ -1197,25 +1328,33 @@ class MegaDWatchdog:
             # Тест 1: Виртуальный порт 255
             try:
                 test_url = f"{base_url}/sec/?pt=255&cmd=on"
-                async with session.get(test_url, timeout=5) as response:
-                    status = response.status
-                    text = await response.text() if status == 200 else ""
-                    
-                    await asyncio.sleep(3)
-                    
-                    event_received = self._last_meaningful_feedback != original_meaningful_time
-                    
-                    result["tests"]["port_255_on"] = {
-                        "url": test_url,
-                        "status": status,
-                        "response": text[:100],
-                        "event_received": event_received,
-                        "success": event_received
-                    }
-                    
-                    if event_received:
-                        result["overall"] = True
-                        return result
+                
+                try:
+                    async with asyncio.timeout(5):
+                        async with session.get(test_url) as response:
+                            status = response.status
+                            text = await response.text() if status == 200 else ""
+                except AttributeError:
+                    async with async_timeout.timeout(5):
+                        async with session.get(test_url) as response:
+                            status = response.status
+                            text = await response.text() if status == 200 else ""
+                
+                await asyncio.sleep(3)
+                
+                event_received = self._last_meaningful_feedback != original_meaningful_time
+                
+                result["tests"]["port_255_on"] = {
+                    "url": test_url,
+                    "status": status,
+                    "response": text[:100],
+                    "event_received": event_received,
+                    "success": event_received
+                }
+                
+                if event_received:
+                    result["overall"] = True
+                    return result
             except asyncio.TimeoutError:
                 result["tests"]["port_255_on"] = {"timeout": True, "success": False}
             except Exception as e:
@@ -1224,16 +1363,24 @@ class MegaDWatchdog:
             # Тест 2: Получить состояние порта 0
             try:
                 test_url = f"{base_url}/sec/?pt=0&cmd=get"
-                async with session.get(test_url, timeout=5) as response:
-                    status = response.status
-                    text = await response.text() if status == 200 else ""
-                    
-                    result["tests"]["port_0_get"] = {
-                        "url": test_url,
-                        "status": status,
-                        "response": text,
-                        "success": status == 200 and text and text.strip() and text.strip().lower() != 'busy'
-                    }
+                
+                try:
+                    async with asyncio.timeout(5):
+                        async with session.get(test_url) as response:
+                            status = response.status
+                            text = await response.text() if status == 200 else ""
+                except AttributeError:
+                    async with async_timeout.timeout(5):
+                        async with session.get(test_url) as response:
+                            status = response.status
+                            text = await response.text() if status == 200 else ""
+                
+                result["tests"]["port_0_get"] = {
+                    "url": test_url,
+                    "status": status,
+                    "response": text,
+                    "success": status == 200 and text and text.strip() and text.strip().lower() != 'busy'
+                }
             except asyncio.TimeoutError:
                 result["tests"]["port_0_get"] = {"timeout": True, "success": False}
             except Exception as e:
@@ -1281,17 +1428,25 @@ class MegaDWatchdog:
             
             try:
                 test_url = f"{base_url}/sec/?cmd=all"
-                async with session.get(test_url, timeout=5) as response:
-                    status = response.status
-                    text = await response.text() if status == 200 else ""
-                    result["tests"]["cmd_all"] = {
-                        "url": test_url,
-                        "status": status,
-                        "text": text[:200] if text else "",
-                        "success": status == 200 and text and text.strip(),
-                        "has_semicolon": ';' in text if text else False,
-                        "semicolon_count": text.count(';') if text else 0
-                    }
+                try:
+                    async with asyncio.timeout(5):
+                        async with session.get(test_url) as response:
+                            status = response.status
+                            text = await response.text() if status == 200 else ""
+                except AttributeError:
+                    async with async_timeout.timeout(5):
+                        async with session.get(test_url) as response:
+                            status = response.status
+                            text = await response.text() if status == 200 else ""
+                
+                result["tests"]["cmd_all"] = {
+                    "url": test_url,
+                    "status": status,
+                    "text": text[:200] if text else "",
+                    "success": status == 200 and text and text.strip(),
+                    "has_semicolon": ';' in text if text else False,
+                    "semicolon_count": text.count(';') if text else 0
+                }
             except asyncio.TimeoutError:
                 result["tests"]["cmd_all"] = {"timeout": True, "success": False}
             except Exception as e:
@@ -1299,16 +1454,24 @@ class MegaDWatchdog:
             
             try:
                 test_url = f"{base_url}/sec/?cmd=uptime"
-                async with session.get(test_url, timeout=3) as response:
-                    status = response.status
-                    text = await response.text() if status == 200 else ""
-                    result["tests"]["cmd_uptime"] = {
-                        "url": test_url,
-                        "status": status,
-                        "text": text,
-                        "success": status == 200 and text and text.strip(),
-                        "is_numeric": text.strip().isdigit() if text else False
-                    }
+                try:
+                    async with asyncio.timeout(3):
+                        async with session.get(test_url) as response:
+                            status = response.status
+                            text = await response.text() if status == 200 else ""
+                except AttributeError:
+                    async with async_timeout.timeout(3):
+                        async with session.get(test_url) as response:
+                            status = response.status
+                            text = await response.text() if status == 200 else ""
+                
+                result["tests"]["cmd_uptime"] = {
+                    "url": test_url,
+                    "status": status,
+                    "text": text,
+                    "success": status == 200 and text and text.strip(),
+                    "is_numeric": text.strip().isdigit() if text else False
+                }
             except asyncio.TimeoutError:
                 result["tests"]["cmd_uptime"] = {"timeout": True, "success": False}
             except Exception as e:
@@ -1316,16 +1479,24 @@ class MegaDWatchdog:
             
             try:
                 test_url = f"{base_url}/sec/?pt=0&cmd=get"
-                async with session.get(test_url, timeout=3) as response:
-                    status = response.status
-                    text = await response.text() if status == 200 else ""
-                    result["tests"]["pt_cmd_get"] = {
-                        "url": test_url,
-                        "status": status,
-                        "text": text,
-                        "success": status == 200 and text and text.strip() and text.strip().lower() != 'busy',
-                        "is_busy": text.strip().lower() == 'busy' if text else False
-                    }
+                try:
+                    async with asyncio.timeout(3):
+                        async with session.get(test_url) as response:
+                            status = response.status
+                            text = await response.text() if status == 200 else ""
+                except AttributeError:
+                    async with async_timeout.timeout(3):
+                        async with session.get(test_url) as response:
+                            status = response.status
+                            text = await response.text() if status == 200 else ""
+                
+                result["tests"]["pt_cmd_get"] = {
+                    "url": test_url,
+                    "status": status,
+                    "text": text,
+                    "success": status == 200 and text and text.strip() and text.strip().lower() != 'busy',
+                    "is_busy": text.strip().lower() == 'busy' if text else False
+                }
             except asyncio.TimeoutError:
                 result["tests"]["pt_cmd_get"] = {"timeout": True, "success": False}
             except Exception as e:
