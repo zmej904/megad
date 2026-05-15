@@ -127,15 +127,20 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 if coordinator and coordinator.watchdog:
                     if coordinator.megad and f"{coordinator.megad.id}" in entity_id:
                         _LOGGER.info(f"Сервис перезагрузки вызван для MegaD-{coordinator.megad.id}")
-                        success = await coordinator.watchdog._reboot_megad()
-                        if success:
+                        # ИСПРАВЛЕНИЕ: используем правильный метод для перезагрузки
+                        # Отправляем команду перезагрузки через megad объект
+                        reboot_success = await coordinator.megad.request_to_megad("?restart=1")
+                        if reboot_success and reboot_success.status == 200:
+                            _LOGGER.info(f"MegaD-{coordinator.megad.id}: команда перезагрузки отправлена")
                             hass.bus.async_fire(
                                 "megad_restarted",
                                 {"megad_id": coordinator.megad.id, "entity_id": entity_id, "success": True}
                             )
                             await asyncio.sleep(90)
-                            await coordinator.watchdog.force_check_and_update()
+                            if coordinator.watchdog:
+                                await coordinator.watchdog.force_check_and_update()
                         else:
+                            _LOGGER.error(f"MegaD-{coordinator.megad.id}: не удалось отправить команду перезагрузки")
                             hass.bus.async_fire(
                                 "megad_restarted",
                                 {"megad_id": coordinator.megad.id, "entity_id": entity_id, "success": False}
