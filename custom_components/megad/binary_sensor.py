@@ -62,6 +62,9 @@ async def async_setup_entry(
 
 
 class BinarySensorMegaD(CoordinatorEntity, BinarySensorEntity):
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     def __init__(self, coordinator: MegaDCoordinator, port: BinaryPortIn, unique_id: str) -> None:
         super().__init__(coordinator)
         self._megad: MegaD = coordinator.megad
@@ -222,6 +225,8 @@ class BinarySensorMegaD(CoordinatorEntity, BinarySensorEntity):
 
 class BinarySensorExtraMegaD(CoordinatorEntity, BinarySensorEntity):
     """Дополнительный бинарный сенсор (I2C расширитель)."""
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     def __init__(
             self, 
