@@ -132,6 +132,9 @@ async def async_setup_entry(
         _LOGGER.debug('Не найдено SWITCH сущностей для создания')
 
 class SwitchMegaD(CoordinatorEntity, SwitchEntity):
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     def __init__(self, coordinator: MegaDCoordinator, port: RelayPortOut, unique_id: str) -> None:
         super().__init__(coordinator)
         self._coordinator: MegaDCoordinator = coordinator
@@ -324,6 +327,8 @@ class SwitchMegaD(CoordinatorEntity, SwitchEntity):
 
 class SwitchGroupMegaD(CoordinatorEntity, SwitchEntity):
     """Класс группы переключателей."""
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     def __init__(
             self, coordinator: MegaDCoordinator, group: int, name: str,
@@ -559,6 +564,9 @@ class SwitchGroupMegaD(CoordinatorEntity, SwitchEntity):
 
 
 class SwitchExtraMegaD(CoordinatorEntity, SwitchEntity):
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+    
     def __init__(self, coordinator: MegaDCoordinator,
                  port: I2CExtraPCA9685 | I2CExtraMCP230xx,
                  config_extra_port: PCA9685RelayConfig | MCP230RelayConfig,
