@@ -51,6 +51,8 @@ async def async_setup_entry(
 class MegaDDisplayEntity(CoordinatorEntity, TextEntity):
     """Класс текстового поля для дисплеев."""
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     def __init__(
             self, coordinator: MegaDCoordinator, port: I2CDisplayPort,
             unique_id: str
@@ -101,6 +103,8 @@ class MegaDDisplayEntity(CoordinatorEntity, TextEntity):
 
 class DisplayLCD1602(MegaDDisplayEntity):
     """Класс для двухстрочного дисплея."""
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     def clean_line(self) -> dict:
         return {PORT: self._port.conf.id, DISPLAY_COMMAND: 1}
@@ -160,6 +164,8 @@ class DisplayLCD1602(MegaDDisplayEntity):
 
 class DisplaySSD1306(MegaDDisplayEntity):
     """Класс для многострочного дисплея."""
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     def clean_line(self, number_of_line: int | None = None) -> dict:
         """Возвращает параметры для очистки нужной строки."""
