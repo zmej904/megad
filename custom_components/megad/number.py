@@ -53,6 +53,8 @@ async def async_setup_entry(
 class PIDCoefficientNumber(CoordinatorEntity, NumberEntity):
     """Класс сущности для коэффициентов ПИД-регулятора."""
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     def __init__(
             self, coordinator: MegaDCoordinator, pid: PIDControl,
             unique_id: str
