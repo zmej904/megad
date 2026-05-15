@@ -15,6 +15,7 @@ from .const import DOMAIN, PORT_COMMAND, ENTRIES, CURRENT_ENTITY_IDS
 from .core.base_ports import (
     RelayPortOut, PWMPortOut, I2CExtraPCA9685, I2CExtraMCP230xx
 )
+from .core.enums import ModeOutMegaD
 from .core.entities import PortOutEntity, PortOutExtraEntity
 from .core.enums import DeviceClassControl
 from .core.megad import MegaD
