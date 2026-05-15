@@ -44,11 +44,21 @@ class MegaDConfigManager:
 
     async def request_to_megad(self, params: dict | str) -> ClientResponse:
         """Отправка запроса к контроллеру"""
-        async with async_timeout.timeout(TIME_OUT_UPDATE):
-            if isinstance(params, str):
-                response = await self.session.get(url=f'{self.url}?{params}')
-            else:
-                response = await self.session.get(url=self.url, params=params)
+        # ✅ ИСПРАВЛЕНИЕ: поддержка новых версий Python (3.11+) и старых
+        try:
+            # Для Python 3.11+ используем встроенный asyncio.timeout
+            async with asyncio.timeout(TIME_OUT_UPDATE):
+                if isinstance(params, str):
+                    response = await self.session.get(url=f'{self.url}?{params}')
+                else:
+                    response = await self.session.get(url=self.url, params=params)
+        except AttributeError:
+            # Fallback для старых версий Python
+            async with async_timeout.timeout(TIME_OUT_UPDATE):
+                if isinstance(params, str):
+                    response = await self.session.get(url=f'{self.url}?{params}')
+                else:
+                    response = await self.session.get(url=self.url, params=params)
         return response
 
     async def fetch_page(self, params: dict) -> str:
@@ -104,12 +114,12 @@ class MegaDConfigManager:
                         value = '1' if inp.has_attr('checked') else ''
                     params += f"{name}={value}&"
 
-        for select in soup.find_all('select'):
-            name = select.get('name')
-            selected_option = select.find('option', selected=True)
-            if selected_option:
-                value = selected_option.get('value', '')
-                params += f"{name}={value}&"
+            for select in soup.find_all('select'):
+                name = select.get('name')
+                selected_option = select.find('option', selected=True)
+                if selected_option:
+                    value = selected_option.get('value', '')
+                    params += f"{name}={value}&"
         return params.rstrip('&')
 
     @staticmethod
