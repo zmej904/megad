@@ -80,6 +80,8 @@ async def async_setup_entry(
 class FanMegaD(PortOutEntity, FanEntity):
     """Релейный вентилятор с поддержкой assumed_state."""
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     _attr_supported_features = (FanEntityFeature.TURN_ON
                                 | FanEntityFeature.TURN_OFF)
 
@@ -207,6 +209,8 @@ class FanMegaD(PortOutEntity, FanEntity):
 class FanPWMBaseMegaD(CoordinatorEntity, FanEntity):
     """Базовый класс для вентиляции с ШИМ с поддержкой assumed_state"""
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     _attr_supported_features = (FanEntityFeature.TURN_ON
                                 | FanEntityFeature.TURN_OFF
                                 | FanEntityFeature.SET_SPEED)
@@ -267,6 +271,8 @@ class FanPWMBaseMegaD(CoordinatorEntity, FanEntity):
 
 class FanPWMMegaD(FanPWMBaseMegaD):
     """ШИМ вентилятор с поддержкой assumed_state."""
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     def __init__(
             self, coordinator: MegaDCoordinator, port: PWMPortOut,
@@ -443,6 +449,8 @@ class FanPWMMegaD(FanPWMBaseMegaD):
 class FanExtraMegaD(PortOutExtraEntity, FanEntity):
     """Дополнительный релейный вентилятор с поддержкой assumed_state."""
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     _attr_supported_features = (FanEntityFeature.TURN_ON
                                 | FanEntityFeature.TURN_OFF)
 
@@ -572,6 +580,8 @@ class FanExtraMegaD(PortOutExtraEntity, FanEntity):
 
 class FanPWMExtraMegaD(FanPWMBaseMegaD):
     """Дополнительный ШИМ вентилятор с поддержкой assumed_state."""
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     def __init__(
             self, coordinator: MegaDCoordinator,
