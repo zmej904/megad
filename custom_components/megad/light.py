@@ -159,6 +159,8 @@ async def async_setup_entry(
 class LightRelayMegaD(CoordinatorEntity, LightEntity):
 
     _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+    _attr_supported_color_modes = {ColorMode.ONOFF}  # ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ
+    _attr_color_mode = ColorMode.ONOFF
 
     def __init__(self, coordinator: MegaDCoordinator, port: RelayPortOut, unique_id: str) -> None:
         super().__init__(coordinator)
