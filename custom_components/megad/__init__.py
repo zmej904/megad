@@ -845,10 +845,10 @@ class MegaDCoordinator(DataUpdateCoordinator):
         }
     
         # ✅ ДОБАВЛЯЕМ suggested_area если указано
-        if suggested_area:
+        # if suggested_area:
             # Нормализуем область (убираем лишние пробелы, делаем заглавными первые буквы)
-            normalized_area = ' '.join(word.capitalize() for word in str(suggested_area).split())
-            device_info["suggested_area"] = normalized_area
+            # normalized_area = ' '.join(word.capitalize() for word in str(suggested_area).split())
+            # device_info["suggested_area"] = normalized_area
     
         # ✅ ДОБАВЛЯЕМ model по умолчанию если не указан
         if not entity_model:
