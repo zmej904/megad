@@ -261,6 +261,8 @@ async def async_setup_entry(
 class StringSensorMegaD(CoordinatorEntity, SensorEntity):
     """Класс для сенсоров с текстовым значением"""
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     def __init__(
             self, coordinator: MegaDCoordinator, port,
             unique_id: str
@@ -308,6 +310,8 @@ class StringSensorMegaD(CoordinatorEntity, SensorEntity):
 
 class ReaderSensorMegaD(StringSensorMegaD):
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     _attr_icon = 'mdi:lock-smart'
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = ["detected", "idle"]
@@ -315,6 +319,8 @@ class ReaderSensorMegaD(StringSensorMegaD):
 
 class ClickSensorMegaD(CoordinatorEntity, SensorEntity):
     """Сенсор кнопки с поддержкой всех типов нажатий"""
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
     
     _attr_icon = 'mdi:gesture-tap-button'
     _attr_device_class = SensorDeviceClass.ENUM
@@ -427,6 +433,9 @@ class ClickSensorMegaD(CoordinatorEntity, SensorEntity):
 
 
 class SensorMegaD(CoordinatorEntity, SensorEntity):
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     def __init__(
             self, coordinator: MegaDCoordinator, port: DigitalSensorBase,
             unique_id: str, type_sensor: str, prefix: str = '',
@@ -577,6 +586,8 @@ class SensorMegaD(CoordinatorEntity, SensorEntity):
 
 class SensorBusMegaD(SensorMegaD):
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     def __init__(
             self, coordinator: MegaDCoordinator, port: DigitalSensorBase,
             unique_id: str, type_sensor: str, id_one_wire: str
@@ -594,6 +605,8 @@ class SensorBusMegaD(SensorMegaD):
 
 
 class SensorDeviceMegaD(CoordinatorEntity, SensorEntity):
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     def __init__(
             self, coordinator: MegaDCoordinator, unique_id: str,
@@ -657,6 +670,8 @@ class SensorDeviceMegaD(CoordinatorEntity, SensorEntity):
 
 class AnalogSensorMegaD(CoordinatorEntity, SensorEntity):
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     _attr_icon = 'mdi:alpha-a-circle-outline'
 
     def __init__(
@@ -709,6 +724,8 @@ class AnalogSensorMegaD(CoordinatorEntity, SensorEntity):
 
 
 class PIDSensorMegaD(CoordinatorEntity, SensorEntity):
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     _attr_icon = 'mdi:information-outline'
 
@@ -766,7 +783,8 @@ class PIDSensorMegaD(CoordinatorEntity, SensorEntity):
     
 class WatchdogStatusSensor(CoordinatorEntity, SensorEntity):
     """Сенсор статуса watchdog."""
-    
+
+      
     _attr_icon = 'mdi:heart-pulse'
     _attr_device_class = SensorDeviceClass.ENUM
     
@@ -813,7 +831,8 @@ class WatchdogStatusSensor(CoordinatorEntity, SensorEntity):
 
 class WatchdogInactivitySensor(CoordinatorEntity, SensorEntity):
     """Сенсор времени без данных."""
-    
+
+       
     _attr_icon = 'mdi:timer-outline'
     _attr_device_class = SensorDeviceClass.DURATION
     
