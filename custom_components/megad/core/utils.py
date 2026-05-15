@@ -98,11 +98,15 @@ def get_megad_ip(local_ip, broadcast_ip) -> list:
             except socket.timeout:
                 _LOGGER.info(f'Поиск устройств завершён.')
                 break
+    except Exception as e:
+        _LOGGER.error(f'Ошибка при поиске устройств: {e}')
     finally:
         sock.close()
         recv_sock.close()
         _LOGGER.info(f'Найденные устройства: {ip_megads}')
-        return ip_megads if ip_megads else DEFAULT_IP_LIST
+    
+    # ИСПРАВЛЕНИЕ: return после блока finally, а не внутри него
+    return ip_megads if ip_megads else DEFAULT_IP_LIST
 
 
 def change_ip(old_ip, new_ip, password, broadcast_ip, host_ip):
@@ -140,6 +144,7 @@ def change_ip(old_ip, new_ip, password, broadcast_ip, host_ip):
             elif pkt[1] == 0x02:
                 sock.close()
                 raise InvalidPasswordMegad
+            sock.close()
             return
     except socket.timeout:
         _LOGGER.info(f'Нет ответа от первого запроса к контроллеру. '
@@ -158,11 +163,12 @@ def change_ip(old_ip, new_ip, password, broadcast_ip, host_ip):
             elif pkt[1] == 0x02:
                 sock.close()
                 raise InvalidPasswordMegad
+            sock.close()
             return
     except socket.timeout:
-        sock.close()
         _LOGGER.info(f'Нет ответа от второго запроса к контроллеру. '
                      f'Возможно адрес был изменён.')
+        sock.close()
         raise ChangeIPMegaDError
 
     sock.close()
