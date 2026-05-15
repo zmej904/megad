@@ -157,6 +157,9 @@ async def async_setup_entry(
 
 
 class LightRelayMegaD(CoordinatorEntity, LightEntity):
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     def __init__(self, coordinator: MegaDCoordinator, port: RelayPortOut, unique_id: str) -> None:
         super().__init__(coordinator)
         self._coordinator = coordinator
@@ -322,6 +325,8 @@ class LightRelayMegaD(CoordinatorEntity, LightEntity):
 class LightPWMBaseMegaD(CoordinatorEntity, LightEntity):
     """Базовый класс для освещения с ШИМ."""
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
     _attr_color_mode = ColorMode.BRIGHTNESS
     _attr_has_entity_name = True
@@ -423,6 +428,8 @@ class LightPWMBaseMegaD(CoordinatorEntity, LightEntity):
 
 class LightPWMMegaD(LightPWMBaseMegaD):
     """ШИМ свет."""
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     def __init__(
             self, 
@@ -561,6 +568,8 @@ class LightPWMMegaD(LightPWMBaseMegaD):
 
 class LightExtraMegaD(CoordinatorEntity, LightEntity):
     """Дополнительный релейный свет."""
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     _attr_supported_color_modes = {ColorMode.ONOFF}
     _attr_color_mode = ColorMode.ONOFF
@@ -734,6 +743,8 @@ class LightExtraMegaD(CoordinatorEntity, LightEntity):
 
 class LightExtraPWMMegaD(LightPWMBaseMegaD):
     """Дополнительный ШИМ свет."""
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     def __init__(
             self, 
