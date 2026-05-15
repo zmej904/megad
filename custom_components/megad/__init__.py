@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sys
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -127,20 +128,26 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 if coordinator and coordinator.watchdog:
                     if coordinator.megad and f"{coordinator.megad.id}" in entity_id:
                         _LOGGER.info(f"Сервис перезагрузки вызван для MegaD-{coordinator.megad.id}")
-                        # ИСПРАВЛЕНИЕ: используем правильный метод для перезагрузки
-                        # Отправляем команду перезагрузки через megad объект
-                        reboot_success = await coordinator.megad.request_to_megad("?restart=1")
-                        if reboot_success and reboot_success.status == 200:
-                            _LOGGER.info(f"MegaD-{coordinator.megad.id}: команда перезагрузки отправлена")
-                            hass.bus.async_fire(
-                                "megad_restarted",
-                                {"megad_id": coordinator.megad.id, "entity_id": entity_id, "success": True}
-                            )
-                            await asyncio.sleep(90)
-                            if coordinator.watchdog:
-                                await coordinator.watchdog.force_check_and_update()
-                        else:
-                            _LOGGER.error(f"MegaD-{coordinator.megad.id}: не удалось отправить команду перезагрузки")
+                        try:
+                            # ИСПРАВЛЕНИЕ: используем правильный формат параметров (словарь)
+                            reboot_response = await coordinator.megad.request_to_megad({"restart": 1})
+                            if reboot_response and reboot_response.status == 200:
+                                _LOGGER.info(f"MegaD-{coordinator.megad.id}: команда перезагрузки отправлена")
+                                hass.bus.async_fire(
+                                    "megad_restarted",
+                                    {"megad_id": coordinator.megad.id, "entity_id": entity_id, "success": True}
+                                )
+                                await asyncio.sleep(90)
+                                if coordinator.watchdog:
+                                    await coordinator.watchdog.force_check_and_update()
+                            else:
+                                _LOGGER.error(f"MegaD-{coordinator.megad.id}: не удалось отправить команду перезагрузки")
+                                hass.bus.async_fire(
+                                    "megad_restarted",
+                                    {"megad_id": coordinator.megad.id, "entity_id": entity_id, "success": False}
+                                )
+                        except Exception as e:
+                            _LOGGER.error(f"MegaD-{coordinator.megad.id}: ошибка при перезагрузке: {e}")
                             hass.bus.async_fire(
                                 "megad_restarted",
                                 {"megad_id": coordinator.megad.id, "entity_id": entity_id, "success": False}
@@ -937,34 +944,42 @@ class MegaDCoordinator(DataUpdateCoordinator):
         try:
             if self.megad.is_flashing:
                 raise FirmwareUpdateInProgress
-            
+
             # Если идет восстановление, пропускаем обычное обновление
             if self._recovery_in_progress:
                 _LOGGER.debug(f"MegaD-{self.megad.id}: восстановление в процессе, пропускаем обновление")
                 return self.megad
-            
-            async with async_timeout.timeout(TIME_OUT_UPDATE_DATA_GENERAL):
-                await self.megad.update_data()
-                self._count_connect = 0
-                self.megad.is_available = True
-                
-                # ✅ ВАЖНОЕ ИСПРАВЛЕНИЕ: ОТМЕЧАЕМ ПОЛУЧЕНИЕ ДАННЫХ ДЛЯ WATCHDOG
-                if self.watchdog:
-                    self.watchdog.mark_data_received()
-                    # ✅ ТАКЖЕ ОТМЕЧАЕМ КАК СОБЫТИЕ ОБРАТНОЙ СВЯЗИ
-                    self.watchdog.mark_feedback_event({"type": "periodic_update", "source": "coordinator"})
-                    self.watchdog._failure_count = 0
-                    self.watchdog._last_success = datetime.now()
-                    self.watchdog._was_offline = False
-                    _LOGGER.debug(f"MegaD-{self.megad.id}: данные обновлены, watchdog сброшен")
-                
-                # Если было восстановление после ошибок, синхронизируем состояния
-                if self._was_unavailable:
-                    _LOGGER.info(f"MegaD-{self.megad.id}: соединение восстановлено, запускаем синхронизацию")
-                    await self.force_sync_all_entities()
-                    self._was_unavailable = False
-                
-                return self.megad
+
+            # ИСПРАВЛЕНИЕ: поддержка новых версий Python (3.11+) и старых
+            if sys.version_info >= (3, 11):
+                # Для Python 3.11+ используем встроенный asyncio.timeout
+                async with asyncio.timeout(TIME_OUT_UPDATE_DATA_GENERAL):
+                    await self.megad.update_data()
+            else:
+                # Fallback для старых версий Python
+                async with async_timeout.timeout(TIME_OUT_UPDATE_DATA_GENERAL):
+                    await self.megad.update_data()
+
+            self._count_connect = 0
+            self.megad.is_available = True
+
+            # ✅ ВАЖНОЕ ИСПРАВЛЕНИЕ: ОТМЕЧАЕМ ПОЛУЧЕНИЕ ДАННЫХ ДЛЯ WATCHDOG
+            if self.watchdog:
+                self.watchdog.mark_data_received()
+                # ✅ ТАКЖЕ ОТМЕЧАЕМ КАК СОБЫТИЕ ОБРАТНОЙ СВЯЗИ
+                self.watchdog.mark_feedback_event({"type": "periodic_update", "source": "coordinator"})
+                self.watchdog._failure_count = 0
+                self.watchdog._last_success = datetime.now()
+                self.watchdog._was_offline = False
+                _LOGGER.debug(f"MegaD-{self.megad.id}: данные обновлены, watchdog сброшен")
+
+            # Если было восстановление после ошибок, синхронизируем состояния
+            if self._was_unavailable:
+                _LOGGER.info(f"MegaD-{self.megad.id}: соединение восстановлено, запускаем синхронизацию")
+                await self.force_sync_all_entities()
+                self._was_unavailable = False
+
+            return self.megad
         except FirmwareUpdateInProgress:
             _LOGGER.warning(f'Обновление данных недоступно, контроллер '
                             f'id-{self.megad.id} обновляется.')
@@ -973,12 +988,12 @@ class MegaDCoordinator(DataUpdateCoordinator):
         except Exception as err:
             self.megad.is_available = False
             self._was_unavailable = True
-            
+
             # ✅ УВЕДОМЛЯЕМ WATCHDOG О ПРОБЛЕМЕ
             if self.watchdog:
                 self.watchdog._failure_count = min(self.watchdog._failure_count + 1, self.watchdog._max_failures)
                 _LOGGER.debug(f"MegaD-{self.megad.id}: ошибка обновления, счетчик watchdog: {self.watchdog._failure_count}")
-            
+
             if self._count_connect < COUNTER_CONNECT:
                 self._count_connect += 1
                 _LOGGER.warning(
@@ -991,7 +1006,7 @@ class MegaDCoordinator(DataUpdateCoordinator):
             else:
                 raise UpdateFailed(f'Ошибка соединения с контроллера id: '
                                    f'{self.megad.id}: {err}')
-            
+
     async def force_refresh(self):
         """Принудительное обновление всех данные."""
         try:
