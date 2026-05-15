@@ -73,19 +73,24 @@ class MegaDFirmwareUpdate(CoordinatorEntity, UpdateEntity):
         self._entry_id = entry_id
         self._lt_version_sw = self._megad.lt_version_sw
         self._lt_version_sw_local = self._megad.lt_version_sw_local
-        self._attr_unique_id = f'{self._megad.id}-megad_firmware_update'
-        self._attr_name = 'Обновление прошивки контроллера'
+        
+        # ✅ ИСПРАВЛЕНИЕ: убираем entity_id, используем только unique_id
+        # Home Assistant сам генерирует entity_id из unique_id
+        self._attr_unique_id = f'{self._megad.id}_firmware_update'
+        self._attr_name = 'Firmware Update'
+        self._attr_title = f'MegaD-{self._megad.id}'
         self._current_version = self._megad.software
         
-        # ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: правильный вызов entity_device_info
+        # ✅ ИСПРАВЛЕНИЕ: правильный вызов entity_device_info
         self._attr_device_info = coordinator.entity_device_info(
             self._attr_name,                           # entity_name
             f'MegaD-{self._megad.id} Firmware Update', # entity_model
             entity_type="firmware_update"              # entity_type
         )
         
-        self.entity_id = f'update.{self._megad.id}-megad_firmware_update'
-        self._attr_has_entity_name = True
+        # ✅ УДАЛЯЕМ ручную установку entity_id
+        # self.entity_id = f'update.{self._megad.id}-megad_firmware_update'
+        # Эта строка вызывала ошибку!
 
     def get_lt_ver_obj(self) -> LatestVersionMegaD:
         """Получает объект последней версии прошивки."""
@@ -111,8 +116,7 @@ class MegaDFirmwareUpdate(CoordinatorEntity, UpdateEntity):
 
     @cached_property
     def title(self) -> str | None:
-        """Title of the software.
-        """
+        """Title of the software."""
         return f'IP-адрес устройства: {self._megad.config.plc.ip_megad}'
 
     def release_notes(self) -> str | None:
