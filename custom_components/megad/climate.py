@@ -67,6 +67,8 @@ async def async_setup_entry(
 class BaseClimateEntity(CoordinatorEntity, ClimateEntity):
     """Базовый класс терморегулятора"""
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
 
     def __init__(
@@ -174,6 +176,8 @@ class BaseClimateEntity(CoordinatorEntity, ClimateEntity):
 class HeatClimateEntity(BaseClimateEntity):
     """Нагревательный терморегулятор"""
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     _attr_hvac_modes = [HVACMode.HEAT, HVACMode.OFF]
 
     @property
@@ -199,6 +203,8 @@ class HeatClimateEntity(BaseClimateEntity):
 class CoolClimateEntity(BaseClimateEntity):
     """Охладительный терморегулятор"""
 
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
+
     _attr_hvac_modes = [HVACMode.COOL, HVACMode.OFF]
 
     @property
@@ -223,6 +229,8 @@ class CoolClimateEntity(BaseClimateEntity):
 
 class PIDClimateEntity(CoordinatorEntity, ClimateEntity):
     """Базовый класс для терморегулятора с ПИД регулированием"""
+
+    _attr_has_entity_name = True  # ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
 
