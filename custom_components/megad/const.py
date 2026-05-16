@@ -238,7 +238,7 @@ PID_LIMIT_D = PIDLimit(min_value=0.0, max_value=10.0)
 
 # Watchdog настройки
 WATCHDOG_MAX_FAILURES = 3  # Максимум ошибок перед восстановлением
-WATCHDOG_INACTIVITY_TIMEOUT = 600  # 5 минут без данных (в секундах)
+WATCHDOG_INACTIVITY_TIMEOUT = 600  # 10 минут без данных (в секундах)
 WATCHDOG_CHECK_INTERVAL = 60  # Интервал проверки (в секундах)
 WATCHDOG_FEEDBACK_TIMEOUT = 600  # Таймаут обратной связи (в секундах)
 WATCHDOG_PING_TIMEOUT = 2  # Таймаут ping (в секундах)
@@ -292,3 +292,16 @@ DEVICE_TYPE_SENSOR = "sensor"
 DEVICE_TYPE_SWITCH = "switch"
 DEVICE_TYPE_BINARY_SENSOR = "binary_sensor"
 DEVICE_TYPE_CLICK_SENSOR = "click_sensor"
+
+# ========== НАСТРОЙКИ CF1 ПО УМОЛЧАНИЮ ДЛЯ WATCHDOG ==========
+DEFAULT_CF1_SETTINGS = {
+    "emsk": "255.255.255.0",    # Маска подсети
+    "pwd": "sec",                # Пароль
+    "gw": "255.255.255.255",     # Шлюз (255.255.255.255 = нет шлюза)
+    "sct": "megad",              # Script name
+    "pr": "",                    # Watchdog (пусто = выключен)
+    "lp": "10",                  # LongP (длительность длинного нажатия)
+    "gsm": "0",                  # UART режим (0=Disabled, 1=GSM, 2=RS485)
+    "gsmf": "1",                 # Флаг GSM
+    "srvt": "0",                 # Тип сервера (0=HTTP, 1=MQTT)
+}
