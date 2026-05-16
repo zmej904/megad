@@ -238,9 +238,9 @@ PID_LIMIT_D = PIDLimit(min_value=0.0, max_value=10.0)
 
 # Watchdog настройки
 WATCHDOG_MAX_FAILURES = 3  # Максимум ошибок перед восстановлением
-WATCHDOG_INACTIVITY_TIMEOUT = 900  # 15 минут без данных (в секундах)
+WATCHDOG_INACTIVITY_TIMEOUT = 300  # 5 минут без данных (в секундах)
 WATCHDOG_CHECK_INTERVAL = 60  # Интервал проверки (в секундах)
-WATCHDOG_FEEDBACK_TIMEOUT = 900  # Таймаут обратной связи (в секундах)
+WATCHDOG_FEEDBACK_TIMEOUT = 300  # Таймаут обратной связи (в секундах)
 WATCHDOG_PING_TIMEOUT = 2  # Таймаут ping (в секундах)
 WATCHDOG_RECOVERY_DELAY = 60  # Задержка после восстановления (в секундах)
 
