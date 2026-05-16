@@ -1205,14 +1205,14 @@ class MegaDCoordinator(DataUpdateCoordinator):
             return
 
         # ✅ ОТМЕЧАЕМ СОБЫТИЕ ОБРАТНОЙ СВЯЗИ ПРИ ИЗМЕНЕНИИ СОСТОЯНИЯ ПОРТА
-        if self.watchdog:
-            self.watchdog.mark_feedback_event({
-                "type": "port_update", 
-                "port_id": port_id, 
-                "data": data,
-                "ext": ext
-            })
-            _LOGGER.debug(f"MegaD-{self.megad.id}: отмечено событие обратной связи для порта {port_id}")
+        # if self.watchdog:
+            # self.watchdog.mark_feedback_event({
+                # "type": "port_update", 
+                # "port_id": port_id, 
+                # "data": data,
+                # "ext": ext
+            # })
+            # _LOGGER.debug(f"MegaD-{self.megad.id}: отмечено событие обратной связи для порта {port_id}")
 
         # ВАЖНО: Многократно обновляем слушателей для немедленного отображения
         # 1. Немедленно обновляем UI
