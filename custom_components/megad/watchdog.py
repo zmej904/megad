@@ -7,10 +7,12 @@ from datetime import datetime
 from typing import Optional, Callable, Any, List
 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import async_timeout
 from .const import (
     WATCHDOG_MAX_FAILURES, 
     WATCHDOG_INACTIVITY_TIMEOUT,
     WATCHDOG_CHECK_INTERVAL,
+    WATCHDOG_FEEDBACK_TIMEOUT,
     DOMAIN,
     DEFAULT_CF1_SETTINGS
 )
@@ -36,17 +38,17 @@ class MegaDWatchdog:
         self._was_offline = False
         self._inactivity_timeout = WATCHDOG_INACTIVITY_TIMEOUT
         self._last_reboot_attempt = None
+        self._last_restore_time = None
+        self._restore_cooldown = 300  # 5 минут между попытками восстановления
         
-        # Обратная связь
+        # Обратная связь (только события от контроллера!)
         self._feedback_enabled = True
         self._feedback_port = 8123
         self._feedback_listeners: List[Callable] = []
         self._feedback_last_event = None
         self._last_meaningful_feedback = None
-        self._feedback_timeout = 900
+        self._feedback_timeout = WATCHDOG_FEEDBACK_TIMEOUT
         self._feedback_check_attempts = 0
-        self._feedback_restore_attempts = 0
-        self._max_feedback_restore_attempts = 3
         self._meaningful_event_counter = 0
         self._non_meaningful_event_counter = 0
         
@@ -62,18 +64,17 @@ class MegaDWatchdog:
         self._last_incoming_data = datetime.now()
         self._last_success = datetime.now()
         self._last_reboot_attempt = None
+        self._last_restore_time = None
         
         self._feedback_last_event = datetime.now()
         self._last_meaningful_feedback = datetime.now()
         self._feedback_check_attempts = 0
-        self._feedback_restore_attempts = 0
         self._meaningful_event_counter = 0
         self._non_meaningful_event_counter = 0
         
         self._watchdog_task = asyncio.create_task(self._watchdog_loop())
         _LOGGER.info(f"Watchdog для MegaD-{self.megad.id} запущен")
         
-        # При первом запуске сохраняем эталонные настройки
         try:
             await self._init_standard_settings()
         except Exception as e:
@@ -92,28 +93,32 @@ class MegaDWatchdog:
         _LOGGER.info(f"Watchdog для MegaD-{self.megad.id} остановлен")
     
     def mark_data_received(self):
-        """Вызывается при получении данных от контроллера."""
+        """Вызывается при любом получении данных от контроллера."""
         self._last_incoming_data = datetime.now()
+        self._failure_count = 0
     
     def mark_feedback_event(self, event_data: Any = None):
-        """Вызывается при получении события обратной связи."""
-        is_meaningful = False
+        """Вызывается только при получении событий от контроллера (обратная связь)."""
+        is_real_feedback = False
         
         if isinstance(event_data, dict):
-            if event_data.get('is_meaningful') or event_data.get('port_id') is not None:
-                is_meaningful = True
-            elif event_data.get('type') in ['port_updated', 'http_callback', 'port_update']:
-                is_meaningful = True
+            if event_data.get('type') == 'http_callback' and event_data.get('port_id') is not None:
+                is_real_feedback = True
+            elif event_data.get('type') == 'port_updated' and event_data.get('success'):
+                is_real_feedback = True
+            elif event_data.get('type') == 'restore_after_reboot':
+                is_real_feedback = True
+            elif event_data.get('is_feedback'):
+                is_real_feedback = True
         
-        self._feedback_last_event = datetime.now()
         self.mark_data_received()
         
-        if is_meaningful:
+        if is_real_feedback:
+            self._feedback_last_event = datetime.now()
             self._last_meaningful_feedback = datetime.now()
             self._feedback_check_attempts = 0
-            self._feedback_restore_attempts = 0
             self._meaningful_event_counter += 1
-            _LOGGER.debug(f"MegaD-{self.megad.id}: ✅ ЗНАЧИМОЕ событие (#{self._meaningful_event_counter})")
+            _LOGGER.info(f"MegaD-{self.megad.id}: ✅ обратная связь от контроллера! (#{self._meaningful_event_counter})")
         else:
             self._non_meaningful_event_counter += 1
     
@@ -128,10 +133,6 @@ class MegaDWatchdog:
                 if self._recovering or self.megad.is_flashing:
                     continue
                 
-                # Периодическая проверка настроек CF1 (раз в час)
-                if int(datetime.now().timestamp()) % 3600 < self._health_check_interval:
-                    await self._check_and_fix_cf1()
-                
                 # Проверка доступности контроллера
                 is_healthy = await self._check_megad_health_basic()
                 
@@ -141,44 +142,27 @@ class MegaDWatchdog:
                     await self._update_coordinator_state(False)
                     
                     if self._failure_count >= self._max_failures:
-                        await self._execute_recovery_procedure()
+                        await self._recover_megad()
                     continue
                 
-                # Проверка обратной связи
-                feedback_ok = await self._check_feedback_connection()
+                # Контроллер доступен
+                await self._update_coordinator_state(True)
+                self._failure_count = 0
                 
-                if not feedback_ok and self._feedback_enabled:
+                # Проверяем время без реальной обратной связи
+                feedback_inactivity = self._get_feedback_inactivity_seconds()
+                
+                # Если долго нет обратной связи - пробуем восстановить
+                if feedback_inactivity > self._feedback_timeout:
                     self._feedback_check_attempts += 1
-                    _LOGGER.warning(f"MegaD-{self.megad.id}: нет обратной связи (попытка {self._feedback_check_attempts})")
+                    _LOGGER.warning(f"MegaD-{self.megad.id}: нет обратной связи {feedback_inactivity} сек (шаг {self._feedback_check_attempts}/3)")
                     
                     if self._feedback_check_attempts >= 3:
-                        await self._try_restore_feedback()
-                    continue
-                
-                # Нормальная работа
-                inactivity_seconds = self._get_inactivity_seconds()
-                
-                if inactivity_seconds < self._inactivity_timeout:
-                    if self._failure_count > 0:
-                        _LOGGER.info(f"MegaD-{self.megad.id}: восстановил нормальную работу")
-                        self._failure_count = 0
-                        self._was_offline = False
-                    await self._update_coordinator_state(True)
-                    
+                        await self._restore_feedback()
                 else:
-                    # Давно нет данных - проверяем
-                    can_pull_data = await self._test_megad_data_pull()
-                    
-                    if can_pull_data:
-                        _LOGGER.info(f"MegaD-{self.megad.id}: доступен, но нет событий")
-                        self._failure_count = 0
-                        await self._update_coordinator_state(True)
-                    else:
-                        self._failure_count = min(self._failure_count + 1, self._max_failures)
-                        await self._update_coordinator_state(False)
-                        
-                        if self._failure_count >= self._max_failures:
-                            await self._execute_recovery_procedure()
+                    if self._feedback_check_attempts > 0:
+                        _LOGGER.info(f"MegaD-{self.megad.id}: обратная связь восстановлена!")
+                        self._feedback_check_attempts = 0
                             
             except asyncio.CancelledError:
                 break
@@ -186,73 +170,215 @@ class MegaDWatchdog:
                 _LOGGER.error(f"Ошибка в цикле watchdog: {e}")
                 await asyncio.sleep(30)
     
-    # ========== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ==========
+    # ========== МЕТОДЫ ДЛЯ РАБОТЫ С СЕНСОРАМИ ==========
     
     def _get_inactivity_seconds(self) -> int:
+        """Возвращает количество секунд без полученных данных."""
         if not self._last_incoming_data:
             return 0
         return int((datetime.now() - self._last_incoming_data).total_seconds())
     
-    def _get_meaningful_inactivity_seconds(self) -> int:
+    def _get_feedback_inactivity_seconds(self) -> int:
+        """Возвращает количество секунд без обратной связи."""
         if not self._last_meaningful_feedback:
             return 999999
         return int((datetime.now() - self._last_meaningful_feedback).total_seconds())
     
-    async def _check_feedback_connection(self) -> bool:
-        if not self._feedback_enabled:
-            return True
-        
-        meaningful_inactivity = self._get_meaningful_inactivity_seconds()
-        if meaningful_inactivity < self._feedback_timeout:
-            return True
-        
-        settings_ok = await self._check_feedback_settings()
-        if not settings_ok:
-            return False
-        
-        return await self._test_feedback_with_command()
+    def _get_meaningful_inactivity_seconds(self) -> int:
+        """Возвращает количество секунд без значимых событий."""
+        if not self._last_meaningful_feedback:
+            return 999999
+        return int((datetime.now() - self._last_meaningful_feedback).total_seconds())
     
-    async def _check_feedback_settings(self, verbose: bool = False) -> bool:
+    # ========== ОСНОВНЫЕ МЕТОДЫ ВОССТАНОВЛЕНИЯ ==========
+    
+    async def _restore_feedback(self) -> bool:
+        """Одна попытка восстановления обратной связи."""
+        
+        # Проверяем кулдаун (не чаще 1 раза в 5 минут)
+        if self._last_restore_time:
+            seconds_since_last = (datetime.now() - self._last_restore_time).total_seconds()
+            if seconds_since_last < self._restore_cooldown:
+                _LOGGER.debug(f"MegaD-{self.megad.id}: восстановление в кулдауне ({int(seconds_since_last)}/{self._restore_cooldown} сек)")
+                return False
+        
+        _LOGGER.warning(f"MegaD-{self.megad.id}: === ВОССТАНОВЛЕНИЕ ОБРАТНОЙ СВЯЗИ ===")
+        
+        # Отправляем правильные настройки на контроллер
+        success = await self._send_restore_request()
+        
+        if success:
+            self._last_restore_time = datetime.now()
+            _LOGGER.warning(f"MegaD-{self.megad.id}: ✅ запрос отправлен, контроллер перезагружается")
+            
+            # Ждем перезагрузки контроллера
+            await asyncio.sleep(15)
+            
+            # Проверяем, появилась ли обратная связь
+            if self._get_feedback_inactivity_seconds() < 60:
+                _LOGGER.info(f"MegaD-{self.megad.id}: ✅ ОБРАТНАЯ СВЯЗЬ ВОССТАНОВЛЕНА!")
+                self._feedback_check_attempts = 0
+                return True
+            else:
+                _LOGGER.error(f"MegaD-{self.megad.id}: ❌ восстановление не помогло")
+                await self._create_manual_intervention_notification()
+                return False
+        
+        return False
+    
+    async def _send_restore_request(self) -> bool:
+        """Отправляет правильные настройки на контроллер."""
         try:
             session = async_get_clientsession(self.hass)
-            base_url = self.megad.url.rstrip('/')
-            config_url = f"{base_url}/sec/?cf=1"
             
-            async with async_timeout.timeout(10):
-                async with session.get(config_url) as response:
-                    if response.status != 200:
-                        return False
-                    text = await response.text()
+            # ========== 1. IP КОНТРОЛЛЕРА из настроек интеграции ==========
+            controller_ip = str(self.megad.config.plc.ip_megad)
             
-            # Проверяем SRV Type (должен быть HTTP - 0)
-            if 'srvt' in text and 'value=0 selected' not in text and 'srvt=0' not in text:
-                if verbose:
-                    _LOGGER.warning(f"MegaD-{self.megad.id}: SRV Type не HTTP")
+            # ========== 2. ПАРОЛЬ из настроек интеграции ==========
+            password = getattr(self.megad.config.plc, 'password', 'sec')
+            
+            # ========== 3. АДРЕС HA (автоопределение) ==========
+            ha_ip = await self._get_home_assistant_ip()
+            if not ha_ip:
+                _LOGGER.error(f"MegaD-{self.megad.id}: не удалось определить IP адрес HA!")
+                await self._create_ip_detection_notification()
                 return False
             
+            ha_port = 8123
+            server_address = f"{ha_ip}:{ha_port}"
+            encoded_server = server_address.replace(':', '%3A')
+            
+            # ========== 4. ОСТАЛЬНЫЕ НАСТРОЙКИ ==========
+            standard = DEFAULT_CF1_SETTINGS.copy()
+            
+            # Формируем базовый URL
+            base_url = self.megad.url.rstrip('/')
+            
+            # Формируем полный URL для восстановления
+            update_url = (
+                f"{base_url}/sec/?cf=1"
+                f"&eip={controller_ip}"
+                f"&emsk={standard.get('emsk', '255.255.255.0')}"
+                f"&pwd={password}"
+                f"&gw={standard.get('gw', '255.255.255.255')}"
+                f"&sip={encoded_server}"
+                f"&srvt=0"
+                f"&sct={standard.get('sct', 'megad')}"
+                f"&pr={standard.get('pr', '')}"
+                f"&lp={standard.get('lp', '10')}"
+                f"&gsm={standard.get('gsm', '0')}"
+                f"&gsmf={standard.get('gsmf', '1')}"
+                f"&save=1"
+            )
+            
+            _LOGGER.warning(f"MegaD-{self.megad.id}: === ОТПРАВКА ВОССТАНОВИТЕЛЬНОГО ЗАПРОСА ===")
+            _LOGGER.info(f"  IP контроллера: {controller_ip}")
+            _LOGGER.info(f"  Пароль: {password}")
+            _LOGGER.info(f"  Адрес сервера HA: {server_address}")
+            _LOGGER.debug(f"  Полный URL: {update_url}")
+            
+            async with async_timeout.timeout(5):
+                async with session.get(update_url) as resp:
+                    if resp.status == 200:
+                        return True
+                    else:
+                        _LOGGER.warning(f"Ошибка HTTP: {resp.status}")
+                        return False
+                    
+        except asyncio.TimeoutError:
+            # Таймаут - контроллер начал перезагрузку
             return True
         except Exception as e:
-            if verbose:
-                _LOGGER.warning(f"MegaD-{self.megad.id}: ошибка проверки: {e}")
+            _LOGGER.error(f"Ошибка отправки запроса: {e}")
             return False
     
-    async def _test_feedback_with_command(self) -> bool:
+    async def _recover_megad(self):
+        """Полное восстановление контроллера."""
+        if self._recovering:
+            return
+            
+        self._recovering = True
+        _LOGGER.warning(f"=== ЗАПУСК ПОЛНОГО ВОССТАНОВЛЕНИЯ ДЛЯ MegaD-{self.megad.id} ===")
+        
         try:
-            original_time = self._last_meaningful_feedback
+            # Отправляем восстановительный запрос
+            await self._restore_feedback()
+            
+            # Если не помогло, пробуем просто перезагрузить
+            if self._get_feedback_inactivity_seconds() > 300:
+                _LOGGER.warning(f"MegaD-{self.megad.id}: перезагрузка контроллера...")
+                await self._send_reboot_command()
+                await asyncio.sleep(10)
+                
+                # Еще раз отправляем настройки
+                await self._send_restore_request()
+                
+        finally:
+            self._recovering = False
+            self._failure_count = 0
+    
+    async def _send_reboot_command(self) -> bool:
+        """Отправка команды перезагрузки."""
+        try:
             session = async_get_clientsession(self.hass)
             base_url = self.megad.url.rstrip('/')
             
-            async with async_timeout.timeout(5):
-                async with session.get(f"{base_url}/sec/?pt=255&cmd=on") as resp:
-                    if resp.status == 200:
-                        await asyncio.sleep(2)
-                        if self._last_meaningful_feedback != original_time:
-                            return True
-            return False
+            async with async_timeout.timeout(3):
+                async with session.get(f"{base_url}/sec/?restart=1") as resp:
+                    return resp.status == 200
+        except asyncio.TimeoutError:
+            return True
         except Exception:
             return False
     
+    # ========== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ==========
+    
+    async def _get_home_assistant_ip(self) -> str:
+        """Определяет реальный IP адрес Home Assistant."""
+        
+        # Способ 1: Через network интеграцию
+        try:
+            from homeassistant.components import network
+            adapters = network.async_get_adapters(self.hass)
+            for adapter in adapters:
+                for ipv4 in adapter.get('ipv4', []):
+                    if (not ipv4.startswith('127.') and 
+                        not ipv4.startswith('0.') and
+                        not ipv4.startswith('255.')):
+                        _LOGGER.info(f"MegaD-{self.megad.id}: IP через network: {ipv4}")
+                        return ipv4
+        except Exception as e:
+            _LOGGER.debug(f"network: {e}")
+        
+        # Способ 2: Через socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            if local_ip and not local_ip.startswith('127.'):
+                _LOGGER.info(f"MegaD-{self.megad.id}: IP через socket: {local_ip}")
+                return local_ip
+        except Exception as e:
+            _LOGGER.debug(f"socket: {e}")
+        
+        # Способ 3: Из external_url
+        try:
+            if self.hass.config.external_url:
+                from urllib.parse import urlparse
+                parsed = urlparse(self.hass.config.external_url)
+                host = parsed.hostname
+                if host and not host.startswith('127.') and host not in ['localhost', '0.0.0.0']:
+                    _LOGGER.info(f"MegaD-{self.megad.id}: IP из external_url: {host}")
+                    return host
+        except Exception as e:
+            _LOGGER.debug(f"external_url: {e}")
+        
+        _LOGGER.error(f"MegaD-{self.megad.id}: не удалось определить IP адрес HA!")
+        return ""
+    
     async def _check_megad_health_basic(self) -> bool:
+        """Базовая проверка доступности контроллера."""
         if not await self._ping_megad():
             return False
         
@@ -269,26 +395,8 @@ class MegaDWatchdog:
         except Exception:
             return False
     
-    async def _test_megad_data_pull(self) -> bool:
-        try:
-            session = async_get_clientsession(self.hass)
-            base_url = self.megad.url.rstrip('/')
-            
-            for cmd in ["?cmd=all", "?cmd=uptime", "?cmd=ver"]:
-                try:
-                    async with async_timeout.timeout(5):
-                        async with session.get(f"{base_url}/sec{cmd}") as response:
-                            if response.status == 200:
-                                text = await response.text()
-                                if text and text.strip():
-                                    return True
-                except:
-                    continue
-            return False
-        except Exception:
-            return False
-    
     async def _ping_megad(self) -> bool:
+        """Проверка доступности через ping."""
         try:
             ip_address = str(self.megad.config.plc.ip_megad)
             param = '-n' if platform.system().lower() == 'windows' else '-c'
@@ -303,6 +411,7 @@ class MegaDWatchdog:
             return False
     
     async def _update_coordinator_state(self, is_available: bool):
+        """Обновление состояния координатора."""
         try:
             self.megad.is_available = is_available
             if hasattr(self.coordinator, 'available'):
@@ -315,232 +424,73 @@ class MegaDWatchdog:
         except Exception as e:
             _LOGGER.debug(f"Ошибка обновления состояния: {e}")
     
-    # ========== ОСНОВНЫЕ МЕТОДЫ ВОССТАНОВЛЕНИЯ ==========
+    # ========== УВЕДОМЛЕНИЯ ==========
     
-    async def _send_correct_cf1_with_save(self) -> bool:
-        """Отправляет правильные настройки CF1 с save=1 (кнопка Save)."""
+    async def _create_manual_intervention_notification(self):
+        """Уведомление о необходимости ручного вмешательства."""
         try:
-            session = async_get_clientsession(self.hass)
-            base_url = self.megad.url.rstrip('/')
+            from homeassistant.components import persistent_notification
             
-            # Определяем правильный адрес HA
-            ha_address = await self._get_home_assistant_address()
-            if not ha_address:
-                _LOGGER.error(f"MegaD-{self.megad.id}: не удалось определить адрес HA")
-                return False
+            ha_ip = await self._get_home_assistant_ip()
             
-            # Получаем эталонные настройки
-            standard = await self._get_standard_cf1_settings()
-            
-            # Формируем URL с save=1 (кнопка Save)
-            update_url = (
-                f"{base_url}/sec/?cf=1"
-                f"&eip={self.megad.config.plc.ip_megad}"
-                f"&emsk={standard.get('emsk', '255.255.255.0')}"
-                f"&pwd={standard.get('pwd', 'sec')}"
-                f"&gw={standard.get('gw', '255.255.255.255')}"
-                f"&sip={ha_address.replace(':', '%3A')}"
-                f"&srvt=0"
-                f"&sct={standard.get('sct', 'megad')}"
-                f"&pr={standard.get('pr', '')}"
-                f"&lp={standard.get('lp', '10')}"
-                f"&gsm={standard.get('gsm', '0')}"
-                f"&gsmf={standard.get('gsmf', '1')}"
-                f"&save=1"
+            message = (
+                f"MegaD-{self.megad.id}: ❌ АВТОМАТИЧЕСКОЕ ВОССТАНОВЛЕНИЕ НЕ УДАЛОСЬ!\n\n"
+                f"Контроллер доступен, но не отправляет обратную связь.\n\n"
+                f"**Что нужно сделать:**\n\n"
+                f"1. Откройте веб-интерфейс MegaD:\n"
+                f"   `http://{self.megad.config.plc.ip_megad}/sec/`\n\n"
+                f"2. Нажмите **Config** → **CF1**\n\n"
+                f"3. Установите параметры:\n"
+                f"   - **SRV Type** = `HTTP`\n"
+                f"   - **SRV** = `{ha_ip if ha_ip else 'IP_вашего_HA'}:8123`\n\n"
+                f"4. Нажмите **Save**\n\n"
+                f"После этого контроллер перезагрузится и обратная связь заработает."
             )
             
-            _LOGGER.info(f"MegaD-{self.megad.id}: отправка правильных настроек на CF1")
-            _LOGGER.info(f"  Адрес сервера: {ha_address}")
-            
-            async with async_timeout.timeout(5):
-                async with session.get(update_url) as resp:
-                    if resp.status == 200:
-                        _LOGGER.info(f"MegaD-{self.megad.id}: ✅ настройки применены (Save)")
-                        return True
-                    return False
-                    
-        except asyncio.TimeoutError:
-            # Контроллер перезагружается - это нормально
-            _LOGGER.info(f"MegaD-{self.megad.id}: контроллер перезагружается после Save")
-            return True
+            persistent_notification.async_create(
+                self.hass,
+                message,
+                title=f"🚨 MegaD-{self.megad.id}: требуется ручная настройка!",
+                notification_id=f"megad_feedback_failure_{self.megad.id}"
+            )
         except Exception as e:
-            _LOGGER.error(f"MegaD-{self.megad.id}: ошибка отправки настроек: {e}")
-            return False
+            _LOGGER.error(f"Ошибка создания уведомления: {e}")
     
-    async def _try_restore_feedback(self) -> bool:
-        """Пытается восстановить обратную связь отправкой Save с правильными настройками."""
-        if not self._feedback_enabled:
-            return False
-        
-        if self._feedback_restore_attempts >= self._max_feedback_restore_attempts:
-            _LOGGER.warning(f"MegaD-{self.megad.id}: максимум попыток восстановления")
-            return False
-        
-        self._feedback_restore_attempts += 1
-        _LOGGER.info(f"MegaD-{self.megad.id}: восстановление обратной связи (попытка {self._feedback_restore_attempts})")
-        
-        # Отправляем правильные настройки с save=1
-        success = await self._send_correct_cf1_with_save()
-        
-        if success:
-            # Контроллер перезагрузился, ждем восстановления
-            await asyncio.sleep(5)
-            if await self._check_feedback_connection():
-                _LOGGER.info(f"MegaD-{self.megad.id}: ✅ обратная связь восстановлена!")
-                self._feedback_restore_attempts = 0
-                return True
-        
-        return False
-    
-    async def _execute_recovery_procedure(self) -> bool:
-        """Полная процедура восстановления."""
-        if self._recovering:
-            return False
-            
-        self._recovering = True
-        _LOGGER.warning(f"=== ЗАПУСК ВОССТАНОВЛЕНИЯ ДЛЯ MegaD-{self.megad.id} ===")
-        
+    async def _create_ip_detection_notification(self):
+        """Уведомление о проблеме определения IP."""
         try:
-            # Сначала пробуем восстановить обратную связь через Save настроек
-            if self._feedback_enabled:
-                if await self._try_restore_feedback():
-                    await self._force_data_update_after_recovery()
-                    return True
+            from homeassistant.components import persistent_notification
             
-            # Если не помогло - перезагружаем контроллер и затем отправляем Save
-            _LOGGER.warning(f"MegaD-{self.megad.id}: перезагрузка контроллера...")
-            reboot_success = await self._send_reboot_command()
+            message = (
+                f"MegaD-{self.megad.id}: ⚠️ НЕ УДАЛОСЬ ОПРЕДЕЛИТЬ IP АДРЕС HOME ASSISTANT!\n\n"
+                f"Автоматическое восстановление обратной связи невозможно.\n\n"
+                f"**Что нужно сделать:**\n\n"
+                f"1. Откройте веб-интерфейс MegaD:\n"
+                f"   `http://{self.megad.config.plc.ip_megad}/sec/`\n\n"
+                f"2. Нажмите **Config** → **CF1**\n\n"
+                f"3. Установите параметры:\n"
+                f"   - **SRV Type** = `HTTP`\n"
+                f"   - **SRV** = `IP_вашего_HA:8123` (введите вручную)\n\n"
+                f"4. Нажмите **Save**\n\n"
+                f"После этого обратная связь заработает."
+            )
             
-            if reboot_success:
-                await asyncio.sleep(3)
-                
-                # После перезагрузки отправляем Save с правильными настройками
-                _LOGGER.info(f"MegaD-{self.megad.id}: отправка настроек после перезагрузки...")
-                save_success = await self._send_correct_cf1_with_save()
-                
-                if save_success:
-                    await asyncio.sleep(5)
-                    if await self._check_megad_health_basic():
-                        _LOGGER.info(f"MegaD-{self.megad.id}: ✅ восстановление успешно!")
-                        await self._force_data_update_after_recovery()
-                        return True
-                
-                await self._create_failure_notification()
-                return False
-            else:
-                await self._create_failure_notification()
-                return False
-                
-        finally:
-            self._recovering = False
-            self._failure_count = 0
-    
-    async def _send_reboot_command(self) -> bool:
-        """Отправка команды перезагрузки."""
-        try:
-            session = async_get_clientsession(self.hass)
-            base_url = self.megad.url.rstrip('/')
-            
-            async with async_timeout.timeout(3):
-                async with session.get(f"{base_url}/sec/?restart=1") as resp:
-                    if resp.status == 200:
-                        return True
-                    return False
-        except asyncio.TimeoutError:
-            return True
-        except Exception:
-            return False
-    
-    async def _force_data_update_after_recovery(self):
-        """Принудительное обновление данных после восстановления."""
-        try:
-            _LOGGER.info(f"MegaD-{self.megad.id}: принудительное обновление данных...")
-            self.mark_data_received()
-            self.mark_feedback_event({"type": "recovery_complete", "is_meaningful": True})
-            await self._update_coordinator_state(True)
-            
-            if hasattr(self.coordinator, 'async_refresh'):
-                await self.coordinator.async_refresh()
+            persistent_notification.async_create(
+                self.hass,
+                message,
+                title=f"⚠️ MegaD-{self.megad.id}: требуется ручная настройка!",
+                notification_id=f"megad_ip_failure_{self.megad.id}"
+            )
         except Exception as e:
-            _LOGGER.error(f"Ошибка при обновлении: {e}")
-    
-    async def _get_home_assistant_address(self) -> str:
-        """Определяет адрес Home Assistant."""
-        try:
-            # Внешний URL
-            if self.hass.config.external_url:
-                from urllib.parse import urlparse
-                parsed = urlparse(self.hass.config.external_url)
-                return f"{parsed.hostname}:{parsed.port or 8123}"
-            
-            # Внутренний URL
-            if self.hass.config.internal_url:
-                from urllib.parse import urlparse
-                parsed = urlparse(self.hass.config.internal_url)
-                return f"{parsed.hostname}:{parsed.port or 8123}"
-            
-            # Автоопределение IP
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
-            return f"{local_ip}:8123"
-        except Exception:
-            return ""
+            _LOGGER.error(f"Ошибка создания уведомления: {e}")
     
     # ========== РАБОТА С ЭТАЛОННЫМИ НАСТРОЙКАМИ ==========
     
     async def _init_standard_settings(self):
         """Инициализирует эталонные настройки."""
-        standard = await self._get_standard_cf1_settings()
-        await self._save_standard_cf1_settings(standard)
-    
-    async def _get_correct_cf1_settings(self) -> dict:
-        """Формирует правильные настройки CF1."""
         settings = DEFAULT_CF1_SETTINGS.copy()
         settings['eip'] = str(self.megad.config.plc.ip_megad)
-        
-        ha_address = await self._get_home_assistant_address()
-        settings['sip'] = ha_address if ha_address else "0.0.0.0:8123"
-        
-        return settings
-    
-    async def _read_current_cf1_settings(self) -> dict:
-        """Читает текущие настройки с контроллера."""
-        try:
-            session = async_get_clientsession(self.hass)
-            base_url = self.megad.url.rstrip('/')
-            
-            async with async_timeout.timeout(10):
-                async with session.get(f"{base_url}/sec/?cf=1") as response:
-                    if response.status != 200:
-                        return {}
-                    html = await response.text()
-            
-            settings = {}
-            
-            for param in ['eip', 'emsk', 'gw', 'sip', 'sct', 'pr', 'lp']:
-                match = re.search(rf'name={param} value="([^"]+)"', html)
-                if match:
-                    settings[param] = match.group(1)
-            
-            match = re.search(r'name=pwd maxlength=3 value="([^"]+)"', html)
-            if match:
-                settings['pwd'] = match.group(1)
-            
-            match = re.search(r'name=srvt.*?value="?(\d+)"?\s*(?:selected)?', html)
-            if match:
-                settings['srvt'] = match.group(1)
-            
-            match = re.search(r'name=gsm.*?value="?(\d+)"?\s*(?:selected)?', html)
-            if match:
-                settings['gsm'] = match.group(1)
-            
-            settings['gsmf'] = '1' if 'name=gsmf value=1 checked' in html else '0'
-            
-            return settings
-        except Exception:
-            return {}
+        await self._save_standard_cf1_settings(settings)
     
     async def _save_standard_cf1_settings(self, settings: dict):
         """Сохраняет эталонные настройки."""
@@ -548,72 +498,64 @@ class MegaDWatchdog:
             if DOMAIN not in self.hass.data:
                 self.hass.data[DOMAIN] = {}
             self.hass.data[DOMAIN]['standard_cf1_settings'] = settings
-            _LOGGER.info(f"MegaD-{self.megad.id}: эталонные настройки сохранены")
         except Exception as e:
-            _LOGGER.error(f"Ошибка сохранения: {e}")
+            _LOGGER.debug(f"Ошибка сохранения настроек: {e}")
     
-    async def _get_standard_cf1_settings(self) -> dict:
-        """Возвращает эталонные настройки."""
-        try:
-            stored = self.hass.data.get(DOMAIN, {}).get('standard_cf1_settings')
-            if stored:
-                return stored
-            
-            correct = await self._get_correct_cf1_settings()
-            await self._save_standard_cf1_settings(correct)
-            return correct
-        except Exception:
-            return await self._get_correct_cf1_settings()
-    
-    async def _check_and_fix_cf1(self) -> bool:
-        """Проверяет настройки и исправляет при необходимости."""
-        current = await self._read_current_cf1_settings()
-        if not current:
-            return False
-        
-        ha_address = await self._get_home_assistant_address()
-        
-        # Проверяем только критичные параметры
-        if ha_address and current.get('sip', '') != ha_address:
-            _LOGGER.info(f"MegaD-{self.megad.id}: адрес сервера отличается, исправляем...")
-            return await self._send_correct_cf1_with_save()
-        
-        if current.get('srvt', '1') != '0':
-            _LOGGER.info(f"MegaD-{self.megad.id}: тип сервера не HTTP, исправляем...")
-            return await self._send_correct_cf1_with_save()
-        
-        return True
-    
-    # ========== ПУБЛИЧНЫЕ МЕТОДЫ ДЛЯ СЕРВИСОВ ==========
-    
-    async def force_check_and_update(self):
-        """Принудительная проверка."""
-        return await self._send_correct_cf1_with_save()
+    # ========== ПУБЛИЧНЫЕ МЕТОДЫ ДЛЯ СЕНСОРОВ ==========
     
     def get_status(self) -> dict:
+        """Возвращает статус watchdog."""
         return {
             "is_running": self._is_running,
             "megad_id": self.megad.id,
             "feedback_enabled": self._feedback_enabled,
-            "meaningful_inactivity_seconds": self._get_meaningful_inactivity_seconds(),
+            "feedback_inactivity_seconds": self._get_feedback_inactivity_seconds(),
             "meaningful_event_counter": self._meaningful_event_counter,
+            "non_meaningful_event_counter": self._non_meaningful_event_counter,
         }
     
     def get_inactivity_seconds(self) -> int:
+        """Возвращает время без данных в секундах."""
         return self._get_inactivity_seconds()
     
+    def get_feedback_inactivity_seconds(self) -> int:
+        """Возвращает время без обратной связи в секундах."""
+        return self._get_feedback_inactivity_seconds()
+    
     def get_meaningful_inactivity_seconds(self) -> int:
+        """Возвращает время без значимых событий в секундах."""
         return self._get_meaningful_inactivity_seconds()
     
+    def get_feedback_status(self) -> str:
+        """Возвращает статус обратной связи."""
+        meaningful_inactivity = self._get_meaningful_inactivity_seconds()
+        
+        if not self._feedback_enabled:
+            return "inactive"
+        elif meaningful_inactivity < 60:
+            return "ok"
+        elif meaningful_inactivity < 300:
+            return "waiting"
+        else:
+            return "failed"
+    
+    def get_feedback_details(self) -> dict:
+        """Возвращает детали обратной связи."""
+        return {
+            "feedback_enabled": self._feedback_enabled,
+            "feedback_inactivity_seconds": self._get_feedback_inactivity_seconds(),
+            "meaningful_inactivity_seconds": self._get_meaningful_inactivity_seconds(),
+            "meaningful_event_counter": self._meaningful_event_counter,
+            "non_meaningful_event_counter": self._non_meaningful_event_counter,
+        }
+    
+    async def force_check_and_update(self):
+        """Принудительная проверка."""
+        return await self._send_restore_request()
+    
     async def get_activity_status(self) -> dict:
+        """Возвращает статус активности."""
         status = self.get_status()
         status["is_healthy"] = await self._check_megad_health_basic()
+        status["feedback_status"] = self.get_feedback_status()
         return status
-    
-    async def restart_feedback_service(self) -> bool:
-        """Ручной перезапуск - отправляет Save с правильными настройками."""
-        return await self._send_correct_cf1_with_save()
-    
-    async def enable_feedback_service(self) -> bool:
-        """Ручное включение - отправляет Save с правильными настройками."""
-        return await self._send_correct_cf1_with_save()
