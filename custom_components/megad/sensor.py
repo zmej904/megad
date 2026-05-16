@@ -877,23 +877,24 @@ class WatchdogFeedbackStatusSensor(CoordinatorEntity, SensorEntity):
             f"MegaD-{coordinator.megad.id} Watchdog"
         )
         
-        self._attr_options = ["ok", "waiting", "failed", "inactive"]
+        self._attr_options = ["active", "waiting", "failed", "inactive", "ok"]
 
     @property
     def native_value(self) -> str:
-        """Возвращает статус обратной связи как простую строку."""
+        """Возвращает статус обратной связи."""
         if not hasattr(self._coordinator, 'watchdog') or not self._coordinator.watchdog:
             return "inactive"
         
-        return self._coordinator.watchdog.get_feedback_status()
-
-    @property
-    def extra_state_attributes(self):
-        """Дополнительные атрибуты."""
-        if not hasattr(self._coordinator, 'watchdog') or not self._coordinator.watchdog:
-            return {}
+        # Получаем время без значимых событий
+        meaningful_inactivity = self._coordinator.watchdog.get_meaningful_inactivity_seconds()
         
-        return self._coordinator.watchdog.get_feedback_details()
+        # Определяем статус
+        if meaningful_inactivity < 60:
+            return "ok"
+        elif meaningful_inactivity < 300:
+            return "waiting"
+        else:
+            return "failed"
 
 
 class WatchdogFeedbackInactivitySensor(CoordinatorEntity, SensorEntity):
