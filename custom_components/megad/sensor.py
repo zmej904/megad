@@ -915,11 +915,12 @@ class WatchdogFeedbackInactivitySensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self) -> int:
-        """Возвращает время без обратной связи в секундах."""
+        """Возвращает время без ЗНАЧИМОЙ обратной связи в секундах."""
         if not hasattr(self._coordinator, 'watchdog') or not self._coordinator.watchdog:
             return 0
-        
-        return self._coordinator.watchdog.get_feedback_inactivity_seconds()
+    
+        # Используем метод для значимых событий
+        return self._coordinator.watchdog.get_meaningful_inactivity_seconds()
 
     @property
     def native_unit_of_measurement(self) -> str:
