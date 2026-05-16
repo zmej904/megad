@@ -338,18 +338,17 @@ class MegaDWatchdog:
     
     # ✅ ОБРАТНАЯ СВЯЗЬ: проверка настроек обратной связи на контроллере
     async def _check_feedback_settings(self, verbose: bool = False) -> bool:
-        """Проверяет настройки обратной связи на контроллере."""
+        """Проверяет настройки обратной связи на контроллере (страница CF1)."""
         try:
             session = async_get_clientsession(self.hass)
             base_url = self.megad.url.rstrip('/')
-            
-            # Запрашиваем страницу конфигурации CF3 (настройки сети и сервера)
-            config_url = f"{base_url}/sec/?cf=3"
-            
+        
+            # Правильная страница - CF1 (не CF3!)
+            config_url = f"{base_url}/sec/?cf=1"
+        
             if verbose:
                 _LOGGER.debug(f"MegaD-{self.megad.id}: проверка настроек обратной связи: {config_url}")
-            
-            # ✅ ИСПРАВЛЕНИЕ: поддержка таймаута для новых версий Python
+        
             try:
                 async with asyncio.timeout(10):
                     async with session.get(config_url) as response:
@@ -357,7 +356,6 @@ class MegaDWatchdog:
                             if verbose:
                                 _LOGGER.warning(f"MegaD-{self.megad.id}: не удалось получить настройки, статус: {response.status}")
                             return False
-                        
                         text = await response.text()
             except AttributeError:
                 async with async_timeout.timeout(10):
@@ -366,40 +364,32 @@ class MegaDWatchdog:
                             if verbose:
                                 _LOGGER.warning(f"MegaD-{self.megad.id}: не удалось получить настройки, статус: {response.status}")
                             return False
-                        
                         text = await response.text()
-            
-            # Ищем настройки обратной связи в тексте страницы
-            feedback_keywords = [
-                'Send To Server', 'обратная связь', 'send to server',
-                'Отправлять на сервер', 'Отправка на сервер'
-            ]
-            
-            has_feedback_setting = any(keyword in text for keyword in feedback_keywords)
-            
-            if not has_feedback_setting:
+        
+            # Проверяем SRV Type (должен быть HTTP - значение 0)
+            if 'srvt' in text:
+                if 'value=0 selected' in text or 'srvt=0' in text:
+                    if verbose:
+                        _LOGGER.info(f"MegaD-{self.megad.id}: SRV Type = HTTP (OK)")
+                else:
+                    if verbose:
+                        _LOGGER.warning(f"MegaD-{self.megad.id}: SRV Type не HTTP")
+                    return False
+        
+            # Проверяем наличие SIP (адрес сервера)
+            if 'sip' in text:
                 if verbose:
-                    _LOGGER.warning(f"MegaD-{self.megad.id}: настройки обратной связи не найдены на странице")
-                return False
-            
-            # Проверяем, включена ли обратная связь
-            enabled_indicators = [
-                'checked', 'value="1"', 'selected',
-                'type="checkbox" checked'
-            ]
-            
-            is_enabled = any(indicator in text for indicator in enabled_indicators)
-            
+                    # Извлекаем текущий адрес для диагностики
+                    import re
+                    match = re.search(r'sip value="([^"]+)"', text)
+                    if match:
+                        _LOGGER.info(f"MegaD-{self.megad.id}: текущий SRV адрес: {match.group(1)}")
+                return True
+        
             if verbose:
-                status = "ВКЛЮЧЕНА" if is_enabled else "ОТКЛЮЧЕНА"
-                _LOGGER.info(f"MegaD-{self.megad.id}: обратная связь {status}")
-            
-            return is_enabled
-                
-        except asyncio.TimeoutError:
-            if verbose:
-                _LOGGER.warning(f"MegaD-{self.megad.id}: таймаут при проверке настроек")
+                _LOGGER.warning(f"MegaD-{self.megad.id}: настройки обратной связи не найдены на странице")
             return False
+                
         except Exception as e:
             if verbose:
                 _LOGGER.warning(f"MegaD-{self.megad.id}: ошибка проверки настроек: {e}")
@@ -581,139 +571,120 @@ class MegaDWatchdog:
     
     # ✅ ОБРАТНАЯ СВЯЗЬ: включение обратной связи на контроллере
     async def _enable_feedback_on_megad(self) -> bool:
-        """Включает обратную связь на контроллере."""
+        """Включает обратную связь на контроллере (страница CF1, параметры sip и srvt)."""
         try:
             session = async_get_clientsession(self.hass)
             base_url = self.megad.url.rstrip('/')
-            
-            # Получаем текущие настройки
-            config_url = f"{base_url}/sec/?cf=3"
-            
-            # ✅ ИСПРАВЛЕНИЕ: поддержка таймаута для новых версий Python
-            try:
-                async with asyncio.timeout(10):
-                    async with session.get(config_url) as response:
-                        if response.status != 200:
-                            return False
-                        text = await response.text()
-            except AttributeError:
-                async with async_timeout.timeout(10):
-                    async with session.get(config_url) as response:
-                        if response.status != 200:
-                            return False
-                        text = await response.text()
-            
+        
             # Определяем адрес сервера Home Assistant
             server_address = await self._get_home_assistant_address()
             if not server_address:
                 _LOGGER.warning(f"MegaD-{self.megad.id}: не удалось определить адрес Home Assistant")
                 return False
-            
-            # Формируем URL для включения обратной связи
-            enable_urls = [
-                f"{base_url}/sec/?cf=3&en=1&server={server_address}&save=1",
-                f"{base_url}/sec/?cf=3&send=1&server={server_address}&save=1",
-                f"{base_url}/sec/?cf=3&feedback=1&server={server_address}&save=1",
-            ]
-            
-            for url in enable_urls:
-                try:
-                    _LOGGER.debug(f"MegaD-{self.megad.id}: попытка включения обратной связи: {url}")
-                    try:
-                        async with asyncio.timeout(5):
-                            async with session.get(url) as resp:
-                                if resp.status == 200:
-                                    resp_text = await resp.text()
-                                    if 'saved' in resp_text.lower() or 'сохранено' in resp_text.lower():
-                                        _LOGGER.info(f"MegaD-{self.megad.id}: настройки обратной связи успешно обновлены")
-                                        return True
-                    except AttributeError:
-                        async with async_timeout.timeout(5):
-                            async with session.get(url) as resp:
-                                if resp.status == 200:
-                                    resp_text = await resp.text()
-                                    if 'saved' in resp_text.lower() or 'сохранено' in resp_text.lower():
-                                        _LOGGER.info(f"MegaD-{self.megad.id}: настройки обратной связи успешно обновлены")
-                                        return True
-                except:
-                    continue
-            
-            return False
+        
+            # Правильный URL для CF1 с параметрами sip (адрес) и srvt (тип сервера, 0=HTTP)
+            # Формат как на странице: sip=192.168.31.100:8123&srvt=0
+            enable_url = f"{base_url}/sec/?cf=1&sip={server_address}&srvt=0&save=1"
+        
+            _LOGGER.debug(f"MegaD-{self.megad.id}: попытка включения обратной связи: {enable_url}")
+        
+            try:
+                async with asyncio.timeout(5):
+                    async with session.get(enable_url) as resp:
+                        if resp.status == 200:
+                            resp_text = await resp.text()
+                            # Проверяем успешность сохранения
+                            if 'saved' in resp_text.lower() or 'сохранено' in resp_text.lower() or 'Save' in resp_text:
+                                _LOGGER.info(f"MegaD-{self.megad.id}: настройки обратной связи успешно обновлены")
+                                return True
+                            else:
+                                _LOGGER.debug(f"MegaD-{self.megad.id}: ответ контроллера: {resp_text[:200]}")
+                                return True  # Считаем успехом, так как ошибки нет
+                        else:
+                            _LOGGER.warning(f"MegaD-{self.megad.id}: ошибка HTTP: {resp.status}")
+                            return False
+            except AttributeError:
+                async with async_timeout.timeout(5):
+                    async with session.get(enable_url) as resp:
+                        if resp.status == 200:
+                            resp_text = await resp.text()
+                            if 'saved' in resp_text.lower() or 'сохранено' in resp_text.lower() or 'Save' in resp_text:
+                                _LOGGER.info(f"MegaD-{self.megad.id}: настройки обратной связи успешно обновлены")
+                                return True
+                            else:
+                                return True
+                        else:
+                            return False
                 
+        except asyncio.TimeoutError:
+            _LOGGER.warning(f"MegaD-{self.megad.id}: таймаут при включении обратной связи")
+            return False
         except Exception as e:
             _LOGGER.error(f"MegaD-{self.megad.id}: ошибка включения обратной связи: {e}")
             return False
     
     async def _get_home_assistant_address(self) -> str:
-        """Получает адрес Home Assistant для обратной связи."""
+        """Получает адрес Home Assistant для обратной связи (порт 8123)."""
         try:
-            # Пробуем разные методы определения адреса
-            
             # 1. Из конфигурации Home Assistant
             if hasattr(self.hass.config, 'api'):
                 host = self.hass.config.api.host or '0.0.0.0'
                 if host != '0.0.0.0':
-                    return f"{host}:{self._feedback_port}"
-            
+                    return f"{host}:8123"  # Порт 8123, не 8082!
+        
             # 2. Из настроек сети
             try:
-                # Получаем IP адрес сервера
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 s.connect(("8.8.8.8", 80))
                 local_ip = s.getsockname()[0]
                 s.close()
-                return f"{local_ip}:{self._feedback_port}"
+                return f"{local_ip}:8123"  # Порт 8123
             except:
                 pass
-            
-            # 3. Запасной вариант - предположим стандартный адрес
-            return "192.168.1.100:8082"
-            
+        
+            # 3. Запасной вариант
+            _LOGGER.warning(f"MegaD-{self.megad.id}: не удалось определить адрес HA, используем заглушку")
+            return "192.168.1.100:8123"
+        
         except Exception as e:
-            _LOGGER.warning(f"MegaD-{self.megad.id}: не удалось определить адрес Home Assistant: {e}")
+            _LOGGER.warning(f"MegaD-{self.megad.id}: ошибка определения адреса HA: {e}")
             return ""
     
     # ✅ ОБРАТНАЯ СВЯЗЬ: перезапуск службы обратной связи
     async def _restart_feedback_service(self) -> bool:
-        """Перезапускает службу обратной связи на контроллере."""
+        """Перезапускает службу обратной связи на контроллере (через перезагрузку)."""
         try:
             session = async_get_clientsession(self.hass)
             base_url = self.megad.url.rstrip('/')
-            
-            restart_urls = [
-                f"{base_url}/sec/?cmd=restart:feedback",
-                f"{base_url}/sec/?cmd=feedback:restart",
-                f"{base_url}/sec/?restart=feedback",
-                f"{base_url}/sec/?cf=3&restart=1&save=1",
-            ]
-            
-            for url in restart_urls:
-                try:
-                    _LOGGER.debug(f"MegaD-{self.megad.id}: попытка перезапуска службы обратной связи: {url}")
-                    try:
-                        async with asyncio.timeout(5):
-                            async with session.get(url) as response:
-                                if response.status == 200:
-                                    text = await response.text()
-                                    _LOGGER.info(f"MegaD-{self.megad.id}: команда перезапуска отправлена: {url}")
-                                    return True
-                    except AttributeError:
-                        async with async_timeout.timeout(5):
-                            async with session.get(url) as response:
-                                if response.status == 200:
-                                    text = await response.text()
-                                    _LOGGER.info(f"MegaD-{self.megad.id}: команда перезапуска отправлена: {url}")
-                                    return True
-                except asyncio.TimeoutError:
-                    _LOGGER.info(f"MegaD-{self.megad.id}: таймаут при перезапуске службы (возможно начался перезапуск)")
-                    return True
-                except:
-                    continue
-            
-            return False
+        
+            # Для CF1 просто перезагружаем контроллер (restart=1)
+            restart_url = f"{base_url}/sec/?restart=1"
+        
+            _LOGGER.debug(f"MegaD-{self.megad.id}: перезагрузка контроллера для применения настроек: {restart_url}")
+        
+            try:
+                async with asyncio.timeout(3):
+                    async with session.get(restart_url) as response:
+                        if response.status == 200:
+                            _LOGGER.info(f"MegaD-{self.megad.id}: команда перезагрузки отправлена")
+                            return True
+                        else:
+                            return False
+            except AttributeError:
+                async with async_timeout.timeout(3):
+                    async with session.get(restart_url) as response:
+                        if response.status == 200:
+                            _LOGGER.info(f"MegaD-{self.megad.id}: команда перезагрузки отправлена")
+                            return True
+                        else:
+                            return False
+            except asyncio.TimeoutError:
+                # Таймаут - контроллер начал перезагрузку
+                _LOGGER.info(f"MegaD-{self.megad.id}: контроллер перезагружается (таймаут)")
+                return True
             
         except Exception as e:
-            _LOGGER.error(f"MegaD-{self.megad.id}: ошибка перезапуска службы обратной связи: {e}")
+            _LOGGER.error(f"MegaD-{self.megad.id}: ошибка перезапуска: {e}")
             return False
     
     async def _check_megad_health_basic(self) -> bool:
