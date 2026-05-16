@@ -104,14 +104,12 @@ class MegaDWatchdog:
         """Вызывается ТОЛЬКО при получении реальных событий от контроллера."""
         is_real_feedback = False
         if isinstance(event_data, dict):
+            # Только входящие HTTP-запросы от контроллера (с портом) и перезагрузка
             if event_data.get("type") == "http_callback" and event_data.get("port_id") is not None:
-                is_real_feedback = True
-            elif event_data.get("type") == "port_updated" and event_data.get("success"):
                 is_real_feedback = True
             elif event_data.get("type") == "restore_after_reboot":
                 is_real_feedback = True
-            elif event_data.get("is_feedback"):
-                is_real_feedback = True
+            # Игнорируем port_updated, periodic_update, и любые другие типы
 
         self.mark_data_received()
 
@@ -128,6 +126,8 @@ class MegaDWatchdog:
             _LOGGER.info(f"MegaD-{self.megad.id}: ✅ обратная связь от контроллера! (#{self._meaningful_event_counter})")
         else:
             self._non_meaningful_event_counter += 1
+            # Для отладки можно залогировать, что событие проигнорировано
+            _LOGGER.debug(f"MegaD-{self.megad.id}: игнорируем событие (не обратная связь): {event_data}")
 
     async def _watchdog_loop(self):
         _LOGGER.debug(f"Watchdog запущен с интервалом {self._health_check_interval} сек")
